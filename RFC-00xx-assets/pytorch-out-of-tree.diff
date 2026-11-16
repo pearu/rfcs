@@ -1,0 +1,40 @@
+diff --git a/aten/src/ATen/native/native_functions.yaml b/aten/src/ATen/native/native_functions.yaml
+index e9f625cc72b..68cb4223c1e 100644
+--- a/aten/src/ATen/native/native_functions.yaml
++++ b/aten/src/ATen/native/native_functions.yaml
+@@ -4275,8 +4275,6 @@
+   structured_inherits: TensorIteratorBase
+   dispatch:
+     CPU, CUDA, MPS, MTIA, XPU: mul_out
+-    SparseCPU: mul_out_sparse_cpu
+-    SparseCUDA: mul_out_sparse_cuda
+     SparseMPS: mul_out_sparse_mps
+     SparseXPU: mul_out_sparse_xpu
+     SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: mul_out_sparse_csr
+@@ -7062,8 +7060,6 @@
+     MPS: addmm_out_mps
+     MTIA: addmm_out_mtia
+     XPU: addmm_out_xpu
+-    SparseCPU: addmm_out_sparse_dense_cpu
+-    SparseCUDA: addmm_out_sparse_dense_cuda
+     SparseMPS: addmm_out_sparse_dense_mps
+     SparseXPU: addmm_out_sparse_dense_xpu
+     SparseCsrCPU: addmm_out_sparse_compressed_cpu
+@@ -7074,8 +7070,6 @@
+   structured_delegate: addmm.out
+   variants: function, method
+   dispatch:
+-    SparseCPU: addmm_sparse_dense_cpu
+-    SparseCUDA: addmm_sparse_dense_cuda
+     SparseMPS: addmm_sparse_dense_mps
+     SparseXPU: addmm_sparse_dense_xpu
+     SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: addmm_sparse_compressed_dense
+@@ -7097,8 +7091,6 @@
+   dispatch:
+     # Warning!  For whatever reason, the inplace sparse addmm is NON
+     # broadcasting
+-    SparseCPU: s_addmm_sparse_dense_cpu_
+-    SparseCUDA: s_addmm_sparse_dense_cuda_
+     SparseXPU: s_addmm_sparse_dense_xpu_
+ 
+ - func: _addmm_activation.out(Tensor self, Tensor mat1, Tensor mat2, *, Scalar beta=1, Scalar alpha=1, bool use_gelu=False, Tensor(a!) out) -> Tensor(a!)
