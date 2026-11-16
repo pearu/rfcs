@@ -63,10 +63,10 @@ The aim is to keep this work, which users depend on, maintained by owners of its
 **CI last.** A PR that touches no sparse file spends ~1.9 of its ~119 runner hours of
 test jobs on sparse tests, 1.6 %.[^ci] Saving it is a side effect, not the reason. The
 share is small partly because sparse is barely tested on backends: on MPS, only COO, and
-only after merge.[^mps] Full MPS coverage would cost about 0.45 h of Apple-silicon
-runner time per run (about a fifth of today's MPS test run, 1.8–2.7 h), on a pool that
-pytorch CI keeps off ordinary PRs. Under this proposal, the package's own CI decides
-which backends to cover, and pays for it.
+only in trunk jobs, never in a PR's default checks.[^mps] Full MPS coverage would cost
+about 0.45 h of Apple-silicon runner time per run (about a fifth of today's MPS test
+run, 1.8–2.7 h), on a pool that pytorch CI keeps off ordinary PRs. Under this proposal,
+the package's own CI decides which backends to cover, and pays for it.
 
 ## **Proposed Implementation**
 
@@ -312,8 +312,9 @@ question.
 [^ci]: 99 landed PRs touching no sparse file, 2026-08-05 to 2026-11-02: job times
     from the GitHub Actions API, per-file test times (`test-times.json`, 2026-11-02)
     over the test files target determination chose.
-[^mps]: At the commit above: no macOS job in `pull.yml`. MPS runs on trunk
-    ([trunk.yml:292-302][trunkmac]) or with a `ciflow/mps` label ([mac-mps.yml:4-8][macmps]),
+[^mps]: At the commit above: no macOS job in `pull.yml`. MPS runs on trunk (after merge,
+    or on a PR labeled `ciflow/trunk`) ([trunk.yml:292-302][trunkmac]) or with a
+    `ciflow/mps` label ([mac-mps.yml:4-8][macmps]),
     which runs a fixed test list without the sparse files ([run_test.py:1994-2013][mpslist]).
     `test_sparse.py` allows MPS for COO only ([test_sparse.py:5920][tsmps]). The estimate
     scales CUDA's device time for the two sparse test files, 2026-11-02, to MPS.
