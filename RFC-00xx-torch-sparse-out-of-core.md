@@ -42,6 +42,11 @@ All pytorch line numbers below are at commit
 - LLMs make parity PRs cheap. Holes in sparse support (MPS ops, CPU/CUDA parity) are
   easy to find and fill. Core reviewers then ask who needs the op, and there is no
   owner to answer or to maintain it afterwards.
+- The open question blocks reviews. [pytorch#201801](https://github.com/pytorch/pytorch/pull/201801) (open since
+  2026-10-23, +53/−6) adds an unsafe CSR/BSR constructor on MPS, a first step toward
+  sparse CSR on MPS for a downstream library. Reviewers asked who would maintain MPS
+  sparse parity, and no one could commit to it.[^201801] Whether such a PR lands
+  depends on who owns sparse backends, which is what this proposal decides.
 - Sparse is small: 1.5 % of issues and 0.4 % of PRs[^issues]; ~27 k lines of C++/CUDA
   in ATen, 3.6 % of it.[^size]
 
@@ -81,9 +86,16 @@ Everything else moves: the kernels (~26 k lines), autograd for sparse ops,
 pytorch releases about every two months. R0 is the first release after the RFC is
 accepted. The new repo is `pytorch/sparse-tensors`, package `sparse_tensors`.
 
+**Design rule.** Move code as close to verbatim as possible, with its existing bugs,
+issues and limitations. Keep the existing tests passing. Make each step small enough
+for a human reviewer to follow. A bug found during the move gets its own PR, after the
+move.
+
+New features should preferably land in the new repo, not in core.
+
 | Release | What changes | `torch.sparse` imports as |
 |---|---|---|
-| **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. The new repo gets named owners. F starts; the semi-structured API warns "moving to TorchAO". | today |
+| **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Governance is decided (question 2). The new repo gets named owners and a design document (below). F starts; the semi-structured API warns "moving to TorchAO". | today |
 | **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparse_tensors`, laid out as the new repo. | alias |
 | **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR drops one from ATen and bumps the package's pin. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. `Backend::allreduce_sparse` deprecated. | dependency of torch, pinned `==`, built by pytorch CI |
 | **R3** | The rest: autograd for sparse-only ops, the c10d sparse kernels, the 14 MPS-only kernels. Sparse test files leave pytorch CI. | dependency, `>=` |
@@ -96,6 +108,22 @@ Users installing the package themselves is not proposed; that is a later decisio
 `torch.optim.functional.sparse_adam` ([functional.py:71][fsa]). Names that stay need
 none: the `Tensor` methods, `torch.sparse_*_tensor`, `Embedding(sparse=True)` and
 `torch.cuda.sparse` ([cuda/sparse.py:1][cudasparse]).
+
+**The design document (R0).** The new repo starts with one. It says why invariant
+checks stay off by default (performance); what a bug report must contain, first a
+reproducer that still fails with invariant checks enabled
+(`torch.sparse.check_sparse_tensor_invariants`); and that agents must read it before
+they file issues or PRs.
+
+**Invariant checks** stay off by default, for performance. A tensor that fails them is
+invalid input, not a bug. Since [pytorch#171695](https://github.com/pytorch/pytorch/pull/171695), torch warns
+once that the checks are implicitly off ([Context.cpp:945][ctx]). Reports still treat
+such crashes as bugs: [pytorch#182662](https://github.com/pytorch/pytorch/issues/182662) and
+[#190045](https://github.com/pytorch/pytorch/issues/190045) were closed as not planned, and
+[pytorch#193824](https://github.com/pytorch/pytorch/issues/193824) is open. PRs add checks that already exist
+but are off: [pytorch#163535](https://github.com/pytorch/pytorch/pull/163535) landed and was reverted, and
+[pytorch#169807](https://github.com/pytorch/pytorch/pull/169807) was stopped (see
+[pytorch#169954](https://github.com/pytorch/pytorch/issues/169954)).
 
 **How the package reaches torch (R2 on).** pytorch CI builds it from a commit pin, as
 for triton ([build-triton-wheel.yml][triton], [binary_populate_env.sh:73-87][bpe]), so
@@ -177,7 +205,7 @@ only; diffs and results in [`RFC-00xx-assets/`](RFC-00xx-assets/README.md).
 
 | Risk | If it happens |
 |---|---|
-| No owners for the new project | A is worse than code in core. Stop at E + D + F, and freeze new backends. |
+| No owners for the new project | A is worse than code in core. The fallback is to be decided; one option is to stop at E + D + F and freeze new backends. |
 | Core does not add the three stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a pin, on every platform. The release order above is untested, and so is conda. |
@@ -244,7 +272,9 @@ maintainers.
 
 1. Is A, through C, the direction you'd back, given that torch keeps
    depending on the package?
-2. Who would own the new repo? Without owners we stop at E + D + F.
+2. Governance of the new repo: who owns it, and who breaks ties on design decisions?
+   This must be decided before the move starts (R0). Without owners, the fallback is
+   to be decided; stopping at E + D + F is one option.
 3. Will core commit to the agreement on new backends?
 4. Will pytorch CI build the package from a commit pin during R2–R3, as for
    triton, on every platform torch ships?
@@ -260,6 +290,8 @@ maintainers.
 [^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
     and the same with `label:"release notes: sparse"`; against 891 random PRs of the
     window with neither label. Human: not a bot, not the author.
+[^201801]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453111398 and
+    https://github.com/pytorch/pytorch/pull/201801#issuecomment-6465922172.
 [^issues]: GitHub search, 2026-11-16: `repo:pytorch/pytorch created:2025-11-16..2026-11-16`,
     `is:issue` or `is:pr`, with and without the sparse labels.
 [^size]: Raw lines at the commit above of `aten/src/ATen/native/sparse/**` and ATen's
@@ -331,6 +363,7 @@ Not implementing on project X now. Will revisit the decision in 1 year.
 [tgm]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torchgen/model.py#L309-L310
 [tgg]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torchgen/gen.py#L3054
 [magma]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/native/cuda/linalg/MagmaUtils.h#L35
+[ctx]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/Context.cpp#L945
 [shim]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/csrc/shim_common.cpp#L77-L186
 [xpucmake]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/caffe2/CMakeLists.txt#L1266-L1336
 [ft]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/functorch/__init__.py#L6-L7
