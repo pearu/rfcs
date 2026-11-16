@@ -284,7 +284,7 @@ question.
 6. Is four releases the right pace, or should R2 and R3 be one?\
    Ask: atalman, malfet
 7. Will core add the three stable-ABI pieces in R1? Who reviews them?\
-   Ask: janeyx99, albanD, eqy, nikitaved
+   Ask: janeyx99, albanD; for the cuSPARSE handle, also eqy, nikitaved
 8. If not, would core take G for sparse, as for XPU? Who would bump the pin
    weekly?\
    Ask: malfet, EikanWang
