@@ -42,11 +42,12 @@ All pytorch line numbers below are at commit
 - LLMs make parity PRs cheap. Holes in sparse support (MPS ops, CPU/CUDA parity) are
   easy to find and fill. Core reviewers then ask who needs the op, and there is no
   owner to answer or to maintain it afterwards.
-- The open question blocks reviews. [pytorch#201801](https://github.com/pytorch/pytorch/pull/201801) (open since
-  2026-10-23, +53/−6) adds an unsafe CSR/BSR constructor on MPS, a first step toward
-  sparse CSR on MPS for a downstream library. Reviewers asked who would maintain MPS
-  sparse parity, and no one could commit to it.[^201801] Whether such a PR lands
-  depends on who owns sparse backends, which is what this proposal decides.
+- The ownership question blocks reviews. [pytorch#201801](https://github.com/pytorch/pytorch/pull/201801) (open
+  since 2026-10-23, +53/−6) adds an unsafe CSR/BSR constructor on MPS, a first step
+  toward sparse CSR on MPS for a downstream library. A core reviewer asked who would
+  maintain MPS sparse parity; the sparse reviewer could not commit to it.[^201801]
+  Whether such a PR lands depends on who owns sparse backends, which is what this
+  proposal decides.
 - Sparse is small: 1.5 % of issues and 0.4 % of PRs[^issues]; ~27 k lines of C++/CUDA
   in ATen, 3.6 % of it.[^size]
 
@@ -109,21 +110,12 @@ Users installing the package themselves is not proposed; that is a later decisio
 none: the `Tensor` methods, `torch.sparse_*_tensor`, `Embedding(sparse=True)` and
 `torch.cuda.sparse` ([cuda/sparse.py:1][cudasparse]).
 
-**The design document (R0).** The new repo starts with one. It says why invariant
-checks stay off by default (performance); what a bug report must contain, first a
-reproducer that still fails with invariant checks enabled
-(`torch.sparse.check_sparse_tensor_invariants`); and that agents must read it before
-they file issues or PRs.
-
-**Invariant checks** stay off by default, for performance. A tensor that fails them is
-invalid input, not a bug. Since [pytorch#171695](https://github.com/pytorch/pytorch/pull/171695), torch warns
-once that the checks are implicitly off ([Context.cpp:945][ctx]). Reports still treat
-such crashes as bugs: [pytorch#182662](https://github.com/pytorch/pytorch/issues/182662) and
-[#190045](https://github.com/pytorch/pytorch/issues/190045) were closed as not planned, and
-[pytorch#193824](https://github.com/pytorch/pytorch/issues/193824) is open. PRs add checks that already exist
-but are off: [pytorch#163535](https://github.com/pytorch/pytorch/pull/163535) landed and was reverted, and
-[pytorch#169807](https://github.com/pytorch/pytorch/pull/169807) was stopped (see
-[pytorch#169954](https://github.com/pytorch/pytorch/issues/169954)).
+**The design document (R0).** The new repo starts with one. Invariant checks stay off
+by default for performance, yet crashes on invalid tensors keep being filed as bugs, and
+PRs keep adding checks that already exist.[^inv] The design document settles this once.
+It says why the checks are off; that a bug report starts with a reproducer that still
+fails with checks enabled (`torch.sparse.check_sparse_tensor_invariants`); and that AI
+agents must read it before they file issues or PRs.
 
 **How the package reaches torch (R2 on).** pytorch CI builds it from a commit pin, as
 for triton ([build-triton-wheel.yml][triton], [binary_populate_env.sh:73-87][bpe]), so
@@ -292,6 +284,11 @@ maintainers.
     window with neither label. Human: not a bot, not the author.
 [^201801]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453111398 and
     https://github.com/pytorch/pytorch/pull/201801#issuecomment-6465922172.
+[^inv]: Crashes on tensors that fail the checks, filed as bugs: [pytorch#182662](https://github.com/pytorch/pytorch/issues/182662) and
+    [pytorch#190045](https://github.com/pytorch/pytorch/issues/190045) (closed as not planned), [pytorch#193824](https://github.com/pytorch/pytorch/issues/193824) (open). PRs adding
+    checks that exist but are off: [pytorch#163535](https://github.com/pytorch/pytorch/pull/163535) (landed, then reverted) and
+    [pytorch#169807](https://github.com/pytorch/pytorch/pull/169807) (stopped); see [pytorch#169954](https://github.com/pytorch/pytorch/issues/169954). Since [pytorch#171695](https://github.com/pytorch/pytorch/pull/171695),
+    torch warns once that the checks are implicitly off ([Context.cpp:945][ctx]).
 [^issues]: GitHub search, 2026-11-16: `repo:pytorch/pytorch created:2025-11-16..2026-11-16`,
     `is:issue` or `is:pr`, with and without the sparse labels.
 [^size]: Raw lines at the commit above of `aten/src/ATen/native/sparse/**` and ATen's
