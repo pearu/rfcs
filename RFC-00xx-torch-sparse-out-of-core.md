@@ -263,29 +263,29 @@ The first readers are malfet and amjames; the Ask lines name who else can answer
 question.
 
 1. Is A, through C, the direction you'd back, given that torch keeps
-   depending on the package?
+   depending on the package?\
    Ask: albanD, malfet
 2. Governance of the new repo: who owns it, and who breaks ties on design decisions?
    This must be decided before the move starts (R0). Without owners, the fallback is
-   to be decided; stopping at E + D + F is one option.
+   to be decided; stopping at E + D + F is one option.\
    Ask: albanD, malfet, amjames, eqy, nikitaved
-3. Will core commit to the agreement on new backends?
+3. Will core commit to the agreement on new backends?\
    Ask: malfet, EikanWang
 4. Will pytorch CI build the package from a commit pin during R2–R3, as for
-   triton, on every platform torch ships?
+   triton, on every platform torch ships?\
    Ask: atalman, malfet
-5. Will TorchAO take the remaining prototype 2:4 ops and classes (F)?
+5. Will TorchAO take the remaining prototype 2:4 ops and classes (F)?\
    Ask: jerryzh168, vkuzo, amjames
-6. Is four releases the right pace, or should R2 and R3 be one?
+6. Is four releases the right pace, or should R2 and R3 be one?\
    Ask: atalman, malfet
-7. Will core add the three stable-ABI pieces in R1? Who reviews them?
+7. Will core add the three stable-ABI pieces in R1? Who reviews them?\
    Ask: janeyx99, albanD, eqy, nikitaved
 8. If not, would core take G for sparse, as for XPU? Who would bump the pin
-   weekly?
+   weekly?\
    Ask: malfet, EikanWang
 9. The XPU maintainers (EikanWang, guangyey, etaf; [merge_rules.yaml:552-563][xpumr]):
    under A, 156 `SparseXPU` and 128 `SparseCsrXPU` registrations of generic kernels
-   move to the package. Would you test them there, or take them into torch-xpu-ops?
+   move to the package. Would you test them there, or take them into torch-xpu-ops?\
    Ask: EikanWang, guangyey
 
 [^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
