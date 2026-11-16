@@ -38,7 +38,7 @@ All pytorch line numbers below are at commit
 - Sparse PRs get a first review as fast as other PRs. They may take longer to land
   (median 6 against 4 days; the 95 % interval of the difference is −0.1 to +6.6
   days). Time to land reflects reviewer availability, not difficulty. The cost is who
-  reviews, not how long it takes.[^prs]
+  reviews.[^prs]
 - LLMs make parity PRs cheap. Holes in sparse support (MPS ops, CPU/CUDA parity) are
   easy to find and fill. Core reviewers then ask who needs the op, and there is no
   owner to answer or to maintain it afterwards.
