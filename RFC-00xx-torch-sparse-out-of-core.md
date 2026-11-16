@@ -85,7 +85,7 @@ Everything else moves: the kernels (~26 k lines), autograd for sparse ops,
 ### The migration
 
 pytorch releases about every two months. R0 is the first release after the RFC is
-accepted. The new repo is `pytorch/sparse-tensors`, package `sparse_tensors`.
+accepted. The new repo is `pytorch/sparsetorch`, package `sparsetorch`.
 
 **Design rule.** Move code as close to verbatim as possible, with its existing bugs,
 issues and limitations. Keep the existing tests passing. Make each step small enough
@@ -97,7 +97,7 @@ New features should preferably land in the new repo, not in core.
 | Release | What changes | `torch.sparse` imports as |
 |---|---|---|
 | **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Governance is decided (question 2). The new repo gets named owners and a design document (below). F starts; the semi-structured API warns "moving to TorchAO". | today |
-| **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparse_tensors`, laid out as the new repo. | alias |
+| **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparsetorch`, laid out as the new repo. | alias |
 | **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR drops one from ATen and bumps the package's pin. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. `Backend::allreduce_sparse` deprecated. | dependency of torch, pinned `==`, built by pytorch CI |
 | **R3** | The rest: autograd for sparse-only ops, the c10d sparse kernels, the 14 MPS-only kernels. Sparse test files leave pytorch CI. | dependency, `>=` |
 | **R4** | `Backend::allreduce_sparse` removed. | dependency |
@@ -138,8 +138,8 @@ package needs XPU and macOS runners, or those maintainers test it.
 | Release | Core adds |
 |---|---|
 | R0 | the `sparse` test config; a marker for the 122 sparse tests in core test files |
-| R1 | `sparse_tensors` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS. **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops; (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle.** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
-| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; an "install `sparse_tensors`" error when it is absent; a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
+| R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS. **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops; (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle.** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
+| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; an "install `sparsetorch`" error when it is absent; a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
 | R3 | an extension point for `Adagrad`'s sparse step |
 
 ### New backends: an agreement with core
@@ -191,7 +191,7 @@ only; diffs and results in [`RFC-00xx-assets/`](RFC-00xx-assets/README.md).
 - Sparse share of pytorch CI time: from 1.6 % towards zero after R3.
 - No regressions in the 122 sparse tests in core test files, run with and without the
   package.
-- Downloads of `sparse_tensors`, once it is published on its own.
+- Downloads of `sparsetorch`, once it is published on its own.
 
 ## **Drawbacks**
 
@@ -252,10 +252,10 @@ its weekly pin needs an owner sparse lacks. XPU's model works because Intel staf
 - `sparse.md` gets the maintenance policy: bug fixes; new ops and backends only with
   user demand and an owner who commits.
 - The package's docs stay at the same URL.
-- The name `sparse_tensors` says what the package holds, and keeps it apart from
-  TorchAO's sparsity (pruning). `torchsparse` reads better, but
-  `mit-han-lab/torchsparse` uses that import name; `torch_sparse` is
-  `rusty1s/pytorch_sparse`, used by PyG.
+- The name `sparsetorch` follows `functorch`: a package for torch only. It is free on
+  PyPI and conda-forge, and distinct from `torchsparse` (the import name of
+  `mit-han-lab/torchsparse`) and `torch_sparse` (`rusty1s/pytorch_sparse`, used by
+  PyG).
 
 ## **Unresolved questions**
 
