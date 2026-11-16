@@ -8,6 +8,22 @@ from a package built on the stable ABI, which `import torch` loads through a
 |---|---|---|
 | `pytorch-out-of-tree.diff` | Deletes the `SparseCPU`/`SparseCUDA` entries of `mul.out`, `addmm.out`, `addmm` and `addmm_` in `native_functions.yaml` (8 lines). The kernel sources stay. | pytorch `a67a74d3e71bf2891b0d02b126fe7390090e1f1c` |
 | `sparse-ext.diff` | The package, `sparse-ext/` (1028 lines): stable-ABI kernels for `mul.out` and `addmm`, `TORCH_TARGET_VERSION` 2.13, and two routes to register `addmm`: Python (`torch.library`, stable only) and a C++ bridge (`register_addmm.cpp`, the one non-stable file). `TORCH_SPARSE_EXT_ADDMM=python` or `cpp` (default) picks the route. | a new directory; builds against the patched pytorch |
+| `sparse-ext.diff`: `csrc/probe_scalar.cpp` | A stable-ABI kernel with a `Scalar` argument. Calling `torch.ops.sparse_ext_probe.scalar_arg(torch.ones(1), 2.0)` raises `RuntimeError: Not yet supported conversion from IValue to StableIValue for schema type: Scalar`. | — |
+| `correctness.py` | 1414 checks of `mul` and `addmm` against dense references, CPU and CUDA | either torch |
+| `bench.py` | the timings below; prints JSON | either torch |
+
+## Reproduce
+
+```
+git -C pytorch checkout a67a74d3e71bf2891b0d02b126fe7390090e1f1c
+git -C pytorch apply pytorch-out-of-tree.diff     # then build pytorch from source
+git apply sparse-ext.diff                           # creates sparse-ext/
+pip install --no-build-isolation -v sparse-ext
+(cd pytorch && python -m pytest test/test_sparse.py)
+python correctness.py
+python bench.py out-of-tree > bench-out-of-tree.json   # and with an unpatched torch
+TORCH_SPARSE_EXT_ADDMM=python python bench.py python > bench-python.json
+```
 
 ## Tests
 
@@ -23,8 +39,8 @@ With `TORCH_DEVICE_BACKEND_AUTOLOAD=0` the package is not loaded, and sparse `mu
 
 Median of 100 runs after 10 warm-up runs; median of three alternating rounds per side.
 float64 COO, coalesced. Small: 1000×1000, nnz 100. Large: 10⁴×10⁴, nnz 10⁶. `addmm`:
-`D` with 16 columns, `beta=0.5`, `alpha=2.0`. RTX 5060 Ti. Ratios are out-of-tree
-over in-tree.
+`D` with 16 columns, `beta=0.5`, `alpha=2.0`. AMD Ryzen 9 9950X (16 cores, 32 torch
+threads), NVIDIA RTX 5060 Ti. Ratios are out-of-tree over in-tree.
 
 | device | nnz | op | in-tree | C++ bridge | ratio | Python route | ratio |
 |---|---|---|---|---|---|---|---|

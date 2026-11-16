@@ -980,9 +980,9 @@ index 0000000..56d20b1
 +++ b/sparse-ext/setup.py
 @@ -0,0 +1,57 @@
 +# sparse-ext: COO mul / addmm kernels registered into aten's SparseCPU and
-+# SparseCUDA dispatch keys from outside the pytorch tree (Task I1-2).
++# SparseCUDA dispatch keys from outside the pytorch tree.
 +#
-+#   pip install --no-build-isolation -v .asb/impl/1/sparse-ext
++#   pip install --no-build-isolation -v sparse-ext
 +import os
 +from pathlib import Path
 +
