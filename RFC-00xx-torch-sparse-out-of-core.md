@@ -32,16 +32,17 @@ All pytorch line numbers below are at commit
 **Maintenance and review come first.**
 - All five "Sparse (torch.sparse)" maintainers are emeritus ([persons_of_interest.md:150-156][poi]).
   The "Sparse" merge rule is approved only by four of them ([merge_rules.yaml:159-180][mr]).
-- They still review. Of 117 sparse PRs in 12 months, 85 % had a human review, and 44
-  were reviewed by an emeritus sparse maintainer.[^prs] The rest of the review falls on
-  core maintainers.
-- Sparse PRs get a first review and land about as fast as other PRs: the 95 %
-  intervals of the difference of medians include zero.[^prs] The cost is who
-  reviews, not how long it takes.
+- They still review. Of 119 sparse PRs in 12 months, 84 % had a human review, and 50
+  (42 %) were reviewed by an emeritus sparse maintainer.[^prs] The rest of the review
+  falls on core maintainers.
+- Sparse PRs get a first review as fast as other PRs. They may take longer to land
+  (median 6 against 4 days; the 95 % interval of the difference is −0.1 to +6.6
+  days). Time to land reflects reviewer availability, not difficulty. The cost is who
+  reviews, not how long it takes.[^prs]
 - LLMs make parity PRs cheap. Holes in sparse support (MPS ops, CPU/CUDA parity) are
   easy to find and fill. Core reviewers then ask who needs the op, and there is no
   owner to answer or to maintain it afterwards.
-- Sparse is small: 1.4 % of issues and 0.4 % of PRs[^issues]; ~27 k lines of C++/CUDA
+- Sparse is small: 1.5 % of issues and 0.4 % of PRs[^issues]; ~27 k lines of C++/CUDA
   in ATen, 3.6 % of it.[^size]
 
 **Users next.** The API is beta ([sparse.md:13-15][beta]); semi-structured and
@@ -256,10 +257,10 @@ maintainers.
    under A, 156 `SparseXPU` and 128 `SparseCsrXPU` registrations of generic kernels
    move to the package. Would you test them there, or take them into torch-xpu-ops?
 
-[^prs]: GitHub search, 2026-11-03: `repo:pytorch/pytorch is:pr created:2025-11-02..2026-11-02 label:"module: sparse"`,
-    and the same with `label:"release notes: sparse"`; against 300 random PRs of the
+[^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
+    and the same with `label:"release notes: sparse"`; against 891 random PRs of the
     window with neither label. Human: not a bot, not the author.
-[^issues]: GitHub search, 2026-11-02: `repo:pytorch/pytorch created:2025-11-02..2026-11-02`,
+[^issues]: GitHub search, 2026-11-16: `repo:pytorch/pytorch created:2025-11-16..2026-11-16`,
     `is:issue` or `is:pr`, with and without the sparse labels.
 [^size]: Raw lines at the commit above of `aten/src/ATen/native/sparse/**` and ATen's
     other `Sparse*` files, against all C++/CUDA in ATen.
