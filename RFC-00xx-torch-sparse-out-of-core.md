@@ -81,10 +81,11 @@ torch.sparse".[^112849] This proposal writes it down as a policy (E), from R0, i
   maintain them;
 - new features should preferably land in the new project, not in core.
 
-The original aim was a sparse tensor that is a drop-in replacement for a dense one in
-every operation ([pytorch/rfcs#6][rfc3]). Core is not aware of actively developed
-projects that need sparse parity on new backends.[^201801] The user stories below test
-that with evidence.
+An early proposal, still a draft ([pytorch/rfcs#6][rfc3], 2020), aimed at a sparse
+tensor that is a drop-in replacement for a dense one in every operation. A core reviewer
+knew of no actively developed project that uses compressed layouts on MPS; a user
+answered with one in the same thread.[^201801] The user stories below test the question
+with evidence.
 
 ### Governance, and the path to community maintenance
 
@@ -177,14 +178,11 @@ none ([A.1](#a1-how-the-package-reaches-torch)).
 **Why four releases.** No Python name breaks, so the pace is set by the work, not by
 deprecation: R1 is mechanical, R2–R3 carry the kernels.
 
-**Every release is a safe place to stop, and to reconsider the plan.** ATen's copy of a
-family is deleted only after a release in which the package's kernels shipped and passed
-the sparse tests. Until then the switch can bring ATen's copies back for any release,
-for example when the package isn't ready. If plans change, whether to continue, change
+**Every release is a safe place to stop, and to reconsider the plan.** Until a family's
+ATen copy is deleted, the switch can bring ATen's copies back for any release, for
+example when the package isn't ready. If plans change, whether to continue, change
 course or move code back is decided then, under the governance of question 2, starting
-from a working torch. The package's CI runs the sparse tests twice, with its kernels and
-with the switch, against the current torch, so the way back stays tested while ATen's
-copies exist.
+from a working torch.
 
 ### Who could do the work
 
@@ -219,7 +217,7 @@ PRs, and 71 opened or commented on sparse issues.[^community]
 |---|---|
 | No owners for the new project | Nothing moves; sparse stays in core under E + D + F (see Governance). |
 | Work stalls or plans change (R2–R3) | Each release is still working. Families not yet deleted from ATen can switch back. The next step is decided under question 2. |
-| Core does not add the four stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
+| Core does not add the four stable-ABI pieces | Fall back to G. Or move kernels through the Python route ([A.9](#a9-evidence-kernel-families-moved)), at its cost per call. |
 
 ## **Alternatives**
 
@@ -299,12 +297,14 @@ Details that matter when implementing the plan, not when deciding its direction.
 
 ### A.1 How the package reaches torch
 
-**How the package reaches torch (R2 on).** pytorch CI builds it from a commit pin, as
-for triton ([build-triton-wheel.yml][triton], [binary_populate_env.sh:73-87][bpe]), so
-registering a family from the package and bumping the pin is one PR. At release, the
-package is built on torch N−1's stable ABI and released first; torch N pins it. With
+From R2, pytorch CI builds it from a commit pin, as for triton
+([build-triton-wheel.yml][triton], [binary_populate_env.sh:73-87][bpe]), so registering
+a family from the package and bumping the pin is one PR. At release, the package is
+built on torch N−1's stable ABI and released first; torch N pins it. With
 `SPARSETORCH_USE_ATEN=1` (name to be decided) it registers nothing, and ATen's copies
-serve.
+serve. The package's CI runs the sparse tests twice, with its kernels and with the
+switch, against the current torch, so the way back stays tested while ATen's copies
+exist.
 
 **The alias (R1 on)** re-exports, where each is documented today: `torch.sparse`;
 `torch.optim.SparseAdam` ([optim/\_\_init\_\_.py:31][sa]); and
@@ -391,17 +391,18 @@ The understanding core is asked for is in [The asks of core](#the-asks-of-core).
 
 ### A.6 XPU and MPS
 
-**XPU and MPS.** 156 of 173 `SparseXPU`, 128 of 139 `SparseCsrXPU`, 147 of 161
-`SparseMPS` and 13 of 13 `SparseCsrMPS` entries in `native_functions.yaml` name the
-same generic kernel as CPU/CUDA. The package registers each moved family for every key
-that names it today. pytorch's XPU and MPS jobs test it during R2–R3; after that, the
-package needs XPU and macOS runners, or those maintainers test it.
+156 of 173 `SparseXPU`, 128 of 139 `SparseCsrXPU`, 147 of 161 `SparseMPS` and 13 of 13
+`SparseCsrMPS` entries in `native_functions.yaml` name the same generic kernel as
+CPU/CUDA. The package registers each moved family for every key that names it today.
+pytorch's XPU and MPS jobs test it during R2–R3; after that, the package needs XPU and
+macOS runners, or those maintainers test it.
 
-The share is small partly because sparse is barely tested on backends: on MPS, only COO,
-and only in trunk jobs, never in a PR's default checks.[^mps] Full MPS coverage would
-cost about 0.45 h of Apple-silicon runner time per run (about a fifth of today's MPS
-test run, 1.8–2.7 h), on a pool that pytorch CI keeps off ordinary PRs. Under this
-proposal, the package's own CI decides which backends to cover, and pays for it.
+The sparse share of CI time is small partly because sparse is barely tested on backends:
+on MPS, only COO, and only in trunk jobs, never in a PR's default checks.[^mps] Full MPS
+coverage would cost about 0.45 h of Apple-silicon runner time per run (about a fifth of
+today's MPS test run, 1.8–2.7 h), on a pool that pytorch CI keeps off ordinary PRs.
+Under this proposal, the package's own CI decides which backends to cover, and pays for
+it.
 
 ### A.7 A against G
 
@@ -427,7 +428,7 @@ its weekly pin needs an owner sparse lacks. XPU's model works because Intel staf
 ### A.9 Evidence: kernel families moved
 
 COO `mul` and `addmm`, CPU and CUDA, were removed from ATen and registered from a
-stable-ABI package (target 2.13) that `import torch` loads. Measured on two families
+stable-ABI package (target 2.13) that `import torch` loads. Timed on these two families
 only; diffs and results in [`RFC-00xx-assets/`](RFC-00xx-assets/README.md).
 
 - [`pytorch-out-of-tree.diff`](RFC-00xx-assets/pytorch-out-of-tree.diff) deletes 8 lines
@@ -464,7 +465,8 @@ dense-key kernels, hence the stubs.
 [^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
     and the same with `label:"release notes: sparse"`; against 891 random PRs of the
     window with neither label. Human: not a bot, not the author.
-[^201801]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453111398 and
+[^201801]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453111398,
+    https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453318175 and
     https://github.com/pytorch/pytorch/pull/201801#issuecomment-6465922172.
 [^112849]: https://github.com/pytorch/pytorch/issues/112849#issuecomment-5267130814 (2026-08-12).
 [^inv]: Crashes on tensors that fail the checks, filed as bugs: [pytorch#182662](https://github.com/pytorch/pytorch/issues/182662) and
