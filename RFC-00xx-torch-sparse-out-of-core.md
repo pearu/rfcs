@@ -346,12 +346,18 @@ Replacing the masked-semantics ops with `torch.masked` is a later decision under
 pytorch's deprecation policy, not part of the move.
 
 **The compiler stack.** `torch.compile` refuses sparse tensors today, at the input
-([builder.py:3449-3460][dynamo-refuse]), and this doesn't change. `torch.export`
-captures sparse ops ([config.py:522-526][dynamo-export]); its graphs, like TorchScript
-archives, name aten ops and layouts that stay in core, so they keep loading and run
-through the package. Fake tensors, AOTAutograd, FX, functionalization and vmap check
-the layout only, or build sparse fakes from the core constructors. They need no hook.
-One Python fake impl (`_spdiags`) stays with its schema, as the autograd formulas do.
+([builder.py:3449-3460][dynamo-refuse]). This proposal doesn't change that, and
+doesn't close the door: there is interest in compiling sparse code.[^compile]
+Support can be added later by the new project, together with the compiler owners.
+Compiled graphs would reach the package's kernels through the dispatcher, as eager
+code does. Core would need dynamo to accept sparse inputs, and fake and meta support
+for the ops, which the package registers per family. `torch.export` already
+captures sparse ops ([config.py:522-526][dynamo-export]); its graphs, like
+TorchScript archives, name aten ops and layouts that stay in core, so they keep
+loading and run through the package. Fake tensors, AOTAutograd, FX,
+functionalization and vmap check the layout only, or build sparse fakes from the
+core constructors. They need no hook. One Python fake impl (`_spdiags`) stays with
+its schema, as the autograd formulas do.
 
 **Backward compatibility.** Each release is backward compatible with the previous
 one. With the package, five families moved and deleted from ATen gave the same result
@@ -524,6 +530,12 @@ through a compiled CUDA model: triton was not installed.
     created 2025-11-16 to 2026-11-16: distinct authors and commenters. Bots, the people named
     above and the core maintainers are excluded.
 [^xpu]: GitHub API, 2026-11-16: commits to `third_party/xpu.txt`, 2025-11-16 to 2026-11-16.
+[^compile]: [pytorch#113232](https://github.com/pytorch/pytorch/issues/113232) (open since 2023-11):
+    Inductor support for GNN workloads with sparse tensors.
+    [pytorch#192093](https://github.com/pytorch/pytorch/pull/192093) and
+    [pytorch#192092](https://github.com/pytorch/pytorch/pull/192092) (open PRs, 2026-08):
+    trace sparse compressed tensor creation in dynamo, and run sparse ops as Inductor
+    fallback kernels.
 
 ## Resolution
 We decided to do it. X% of the engineering team actively approved of this change.
