@@ -1,8 +1,9 @@
-# Assets of RFC-00xx: two sparse kernel families moved out of core
+# Assets of RFC-00xx: experiments moving sparse kernel families out of core
 
-An experiment: COO `mul` and `addmm`, CPU and CUDA, removed from ATen and registered
-from a package built on the stable ABI, which `import torch` loads through a
-`torch.backends` entry point. Measured on two families only; MPS and XPU not tried.
+Two experiments. First: COO `mul` and `addmm`, CPU and CUDA, removed from ATen and
+registered from a package built on the stable ABI, which `import torch` loads through a
+`torch.backends` entry point. Second: the `mul` family registered over ATen's kernels,
+which stay. Measured on two families only; MPS and XPU not tried.
 
 | File | What it is | Applies to |
 |---|---|---|
@@ -24,6 +25,7 @@ pip install --no-build-isolation -v sparse-ext
 python correctness.py
 python bench.py out-of-tree > bench-out-of-tree.json   # and with an unpatched torch
 TORCH_SPARSE_EXT_ADDMM=python python bench.py python > bench-python.json
+git apply sparse-ext-override.diff  # second experiment: on top of sparse-ext/, pytorch unpatched at a67a74d3e7; run test_sparse.py -k mul with and without SPARSETORCH_USE_ATEN=1
 ```
 
 ## Tests
