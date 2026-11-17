@@ -1,0 +1,800 @@
+diff --git a/sparse-ext/csrc/addmm.cpp b/sparse-ext/csrc/addmm.cpp
+deleted file mode 100644
+index 9744da4..0000000
+--- a/sparse-ext/csrc/addmm.cpp
++++ /dev/null
+@@ -1,169 +0,0 @@
+-// addmm(dense, sparse COO, dense) for SparseCPU (and the dispatch to the CUDA
+-// kernel), on the stable ABI only. A port of s_addmm_out_sparse_dense_cpu and its
+-// worker (aten/src/ATen/native/sparse/SparseTensorMath.cpp). The in-tree worker
+-// calls at::native::cpublas::axpy for each nonzero; the stable ABI has no BLAS,
+-// so the axpy is a plain loop here.
+-#include "addmm.h"
+-
+-#include <torch/headeronly/util/BFloat16.h>
+-#include <torch/headeronly/util/Half.h>
+-#include <torch/headeronly/util/complex.h>
+-
+-#define SX_FORALL_ADDMM_TYPES(_)                                   \
+-  _(uint8_t, Byte) _(int8_t, Char) _(int16_t, Short) _(int, Int)   \
+-  _(int64_t, Long) _(float, Float) _(double, Double)               \
+-  _(c10::Half, Half) _(c10::BFloat16, BFloat16)                    \
+-  _(c10::complex<float>, ComplexFloat) _(c10::complex<double>, ComplexDouble)
+-
+-namespace sx {
+-namespace {
+-
+-template <typename T> struct is_cplx : std::false_type {};
+-template <typename T> struct is_cplx<c10::complex<T>> : std::true_type {};
+-
+-template <typename T>
+-T cast(cdouble v) {
+-  if constexpr (is_cplx<T>::value) {
+-    return T(v.real(), v.imag());
+-  } else {
+-    return static_cast<T>(v.real());
+-  }
+-}
+-
+-bool same_tensor(const Tensor& a, const Tensor& b) {
+-  return a.data_ptr() == b.data_ptr() && vec(a.sizes()) == vec(b.sizes()) &&
+-         vec(a.strides()) == vec(b.strides());
+-}
+-
+-template <typename T>
+-void addmm_cpu_worker(int64_t nnz, int64_t dim_i, int64_t dim_j, int64_t dim_k, Tensor& r,
+-                      cdouble beta, const Tensor& t, cdouble alpha, const Tensor& indices,
+-                      const Tensor& values, const Tensor& dense) {
+-  const T cast_alpha = cast<T>(alpha);
+-  const T cast_beta = cast<T>(beta);
+-  T* r_ptr = r.mutable_data_ptr<T>();
+-  const int64_t r_stride0 = r.stride(0), r_stride1 = r.stride(1);
+-
+-  if (cast_beta == T(0)) {
+-    zero_(r);
+-  } else if (cast_beta == T(1)) {
+-    if (!same_tensor(r, t)) copy_(r, t);
+-  } else {
+-    const T* t_ptr = t.const_data_ptr<T>();
+-    const int64_t t_stride0 = t.stride(0), t_stride1 = t.stride(1);
+-    for (int64_t i = 0; i < dim_i; i++)
+-      for (int64_t k = 0; k < dim_k; k++)
+-        r_ptr[i * r_stride0 + k * r_stride1] = cast_beta * t_ptr[i * t_stride0 + k * t_stride1];
+-  }
+-
+-  const int64_t* idx = indices.const_data_ptr<int64_t>();
+-  const int64_t is0 = indices.stride(0), is1 = indices.stride(1);
+-  const T* val = values.const_data_ptr<T>();
+-  const int64_t vs = values.stride(0);
+-  const T* dense_ptr = dense.const_data_ptr<T>();
+-  const int64_t dense_stride0 = dense.stride(0), dense_stride1 = dense.stride(1);
+-  for (int64_t i = 0; i < nnz; i++) {
+-    const int64_t row = idx[i * is1], col = idx[is0 + i * is1];
+-    STD_TORCH_CHECK(col >= 0 && col < dim_j,
+-                    "addmm: index out of column bound: ", col, " not between 1 and ", dim_j);
+-    STD_TORCH_CHECK(row >= 0 && row < dim_i,
+-                    "addmm: index out of row bound: ", row, " not between 1 and ", dim_i);
+-    const T a = cast_alpha * val[i * vs];
+-    const T* x = dense_ptr + col * dense_stride0;
+-    T* y = r_ptr + row * r_stride0;
+-    for (int64_t k = 0; k < dim_k; k++) y[k * r_stride1] += a * x[k * dense_stride1];
+-  }
+-}
+-
+-void addmm_out_sparse_dense_cpu(Tensor& r, const Tensor& t, const Tensor& sparse,
+-                                const Tensor& dense, cdouble beta, cdouble alpha) {
+-  STD_TORCH_CHECK(t.is_cpu(), "Expected all tensors to be on the same device. addmm expected 't' to be CPU tensor");
+-  STD_TORCH_CHECK(r.is_cpu(), "Expected all tensors to be on the same device. addmm: expected 'out' to be CPU tensor");
+-  STD_TORCH_CHECK(sparse.is_cpu(), "Expected all tensors to be on the same device. addmm: expected 'mat1' to be a CPU tensor");
+-  STD_TORCH_CHECK(dense.is_cpu(), "Expected all tensors to be on the same device. addmm: expected 'mat2' to be a CPU tensor");
+-  STD_TORCH_CHECK(r.layout() == Layout::Strided, "addmm_sparse_dense: expected strided result tensor");
+-  STD_TORCH_CHECK(t.layout() == Layout::Strided, "addmm_sparse_dense: expected 't' to have strided layout");
+-  STD_TORCH_CHECK(is_sparse(sparse) && dense.layout() == Layout::Strided,
+-                  "addmm_sparse_dense: expected either 'mat1' to have sparse layout and 'mat2' to have strided layout");
+-  STD_TORCH_CHECK(sparse_dim(sparse) == 2, "addmm: matrices expected, got ", sparse_dim(sparse), "D tensor");
+-  STD_TORCH_CHECK(dense_dim(sparse) == 0, "addmm: scalar values expected, got ", dense_dim(sparse), "D values");
+-  STD_TORCH_CHECK(dense.dim() == 2, "addmm: matrices expected, got ", dense.dim(), "D tensor");
+-
+-  const int64_t dim_i = sparse.size(0), dim_j = sparse.size(1), dim_k = dense.size(1);
+-  STD_TORCH_CHECK(dense.size(0) == dim_j, "addmm: Argument #3 (dense): Expected dim 0 size ", dim_j, ", got ", dense.size(0));
+-  STD_TORCH_CHECK(t.size(0) == dim_i, "addmm: Argument #1 (t): Expected dim 0 size ", dim_i, ", got ", t.size(0));
+-  STD_TORCH_CHECK(t.size(1) == dim_k, "addmm: Argument #1 (t): Expected dim 1 size ", dim_k, ", got ", t.size(1));
+-
+-  resize_(r, {dim_i, dim_k});
+-  const int64_t n = nnz(sparse);
+-  if (n == 0) {
+-    mul_out(t, scalar_tensor(beta, r.scalar_type()), r);
+-    return;
+-  }
+-  const Tensor idx = indices(sparse);
+-  const Tensor val = values(sparse);
+-  switch (val.scalar_type()) {
+-#define SX_CASE(T, N)                                                                    \
+-    case ScalarType::N:                                                                  \
+-      addmm_cpu_worker<T>(n, dim_i, dim_j, dim_k, r, beta, t, alpha, idx, val, dense);  \
+-      break;
+-    SX_FORALL_ADDMM_TYPES(SX_CASE)
+-#undef SX_CASE
+-    default:
+-      STD_TORCH_CHECK(false, "\"addmm_sparse_dense\" not implemented for this dtype");
+-  }
+-}
+-
+-}  // namespace
+-
+-Tensor scalar_tensor(cdouble v, ScalarType dtype) {
+-  Tensor s = torch::stable::empty({}, dtype);
+-  switch (dtype) {
+-#define SX_CASE(T, N) \
+-    case ScalarType::N: *s.mutable_data_ptr<T>() = cast<T>(v); break;
+-    SX_FORALL_ADDMM_TYPES(SX_CASE)
+-#undef SX_CASE
+-    case ScalarType::Bool: *s.mutable_data_ptr<bool>() = v != cdouble(0); break;
+-    default: STD_TORCH_CHECK(false, "sparse-ext: unsupported dtype for a scalar");
+-  }
+-  return s;
+-}
+-
+-}  // namespace sx
+-
+-namespace sx {
+-
+-Tensor addmm(const Tensor& self, const Tensor& mat1, const Tensor& mat2, cdouble beta,
+-             cdouble alpha, std::optional<Tensor> out_, bool expand_self) {
+-  Tensor out = out_ ? *out_
+-                    : torch::stable::empty({0}, self.scalar_type(), std::nullopt, self.device());
+-  const Tensor t = expand_self ? expand(self, {mat1.size(0), mat2.size(1)}) : self;
+-  if (mat1.is_cuda()) {
+-#ifdef SX_USE_CUDA
+-    addmm_out_sparse_dense_cuda(out, t, mat1, mat2, beta, alpha);
+-#else
+-    STD_TORCH_CHECK(false, "sparse-ext was built without CUDA");
+-#endif
+-  } else {
+-    addmm_out_sparse_dense_cpu(out, t, mat1, mat2, beta, alpha);
+-  }
+-  return out;
+-}
+-
+-}  // namespace sx
+-
+-extern "C" AtenTensorHandle sx_addmm(
+-    AtenTensorHandle self_h, AtenTensorHandle mat1_h, AtenTensorHandle mat2_h,
+-    double beta_re, double beta_im, double alpha_re, double alpha_im,
+-    AtenTensorHandle out_h, int expand_self) {
+-  using namespace sx;
+-  const Tensor self(self_h), mat1(mat1_h), mat2(mat2_h);
+-  std::optional<Tensor> out;
+-  if (out_h) out = Tensor(out_h);
+-  const Tensor r = addmm(self, mat1, mat2, cdouble(beta_re, beta_im), cdouble(alpha_re, alpha_im),
+-                         out, expand_self);
+-  // A new handle for the caller; `r` releases its own.
+-  AtenTensorHandle ret = nullptr;
+-  STABLE_TORCH_ERROR_CODE_CHECK(aoti_torch_new_tensor_handle(r.get(), &ret));
+-  return ret;
+-}
+diff --git a/sparse-ext/csrc/addmm.h b/sparse-ext/csrc/addmm.h
+deleted file mode 100644
+index d416052..0000000
+--- a/sparse-ext/csrc/addmm.h
++++ /dev/null
+@@ -1,37 +0,0 @@
+-// addmm(dense, sparse COO, dense) kernels, written on the stable ABI. They are
+-// registered by register_addmm.cpp, which is not on the stable ABI: addmm's
+-// schema has `Scalar beta, Scalar alpha`, and the stable boxed kernel cannot
+-// receive a Scalar (shim_common.cpp from_ivalue has no ScalarType::Scalar case).
+-#pragma once
+-
+-// The stable C shim (AtenTensorHandle and friends); it lives under inductor/ for
+-// historical reasons and is what torch/csrc/stable builds on.
+-#include <torch/csrc/inductor/aoti_torch/c/shim.h>
+-
+-// The C entry point register_addmm.cpp calls. Takes ownership of every handle it
+-// is given; `out` may be null (functional addmm: a new strided result). Returns a
+-// new handle to the result. expand_self: broadcast self to (mat1.size(0),
+-// mat2.size(1)), as addmm and addmm.out do and addmm_ does not.
+-extern "C" AtenTensorHandle sx_addmm(
+-    AtenTensorHandle self, AtenTensorHandle mat1, AtenTensorHandle mat2,
+-    double beta_re, double beta_im, double alpha_re, double alpha_im,
+-    AtenTensorHandle out, int expand_self);
+-
+-#ifdef __cplusplus
+-#include "sx.h"
+-#include <complex>
+-namespace sx {
+-using cdouble = std::complex<double>;
+-// addmm / addmm.out / addmm_ on a sparse COO mat1, CPU or CUDA. out: the result
+-// tensor (none: a new strided one); expand_self as for sx_addmm.
+-Tensor addmm(const Tensor& self, const Tensor& mat1, const Tensor& mat2, cdouble beta,
+-             cdouble alpha, std::optional<Tensor> out, bool expand_self);
+-// A 0-dim CPU tensor of dtype holding v.
+-Tensor scalar_tensor(cdouble v, ScalarType dtype);
+-#ifdef SX_USE_CUDA
+-// Port of s_addmm_out_sparse_dense_cuda (cuSPARSE SpMM), in addmm_cuda.cu.
+-void addmm_out_sparse_dense_cuda(Tensor& r, const Tensor& t, const Tensor& sparse,
+-                                 const Tensor& dense, cdouble beta, cdouble alpha);
+-#endif
+-}  // namespace sx
+-#endif
+diff --git a/sparse-ext/csrc/addmm_cuda.cu b/sparse-ext/csrc/addmm_cuda.cu
+deleted file mode 100644
+index 9a3945e..0000000
+--- a/sparse-ext/csrc/addmm_cuda.cu
++++ /dev/null
+@@ -1,198 +0,0 @@
+-// addmm(dense, sparse COO, dense) for SparseCUDA: a port of
+-// s_addmm_out_sparse_dense_cuda, s_addmm_out_csr_sparse_dense_cuda_worker and
+-// sparse::cuda::csrmm2 (aten/src/ATen/native/sparse/cuda/). Stable ABI for every
+-// torch call; cuSPARSE is called directly. The stable ABI exposes no cuSPARSE
+-// handle (it has torch_get_current_cuda_blas_handle only), so the package keeps
+-// its own handle per device and binds it to torch's current stream.
+-#include "addmm.h"
+-
+-#include <torch/csrc/stable/accelerator.h>
+-#include <torch/headeronly/util/complex.h>
+-
+-#include <cuda_runtime_api.h>
+-#include <cusparse.h>
+-
+-#include <array>
+-#include <climits>
+-
+-#define SX_CUSPARSE_CHECK(expr)                                                \
+-  do {                                                                         \
+-    cusparseStatus_t st_ = (expr);                                             \
+-    STD_TORCH_CHECK(st_ == CUSPARSE_STATUS_SUCCESS, "cuSPARSE error: ",        \
+-                    cusparseGetErrorString(st_), " at " #expr);                \
+-  } while (0)
+-
+-namespace sx {
+-namespace {
+-
+-constexpr int kMaxDevices = 64;
+-
+-cusparseHandle_t current_handle(int32_t device) {
+-  STD_TORCH_CHECK(device >= 0 && device < kMaxDevices, "sparse-ext: bad CUDA device index");
+-  thread_local std::array<cusparseHandle_t, kMaxDevices> handles{};
+-  if (!handles[device]) {
+-    SX_CUSPARSE_CHECK(cusparseCreate(&handles[device]));
+-  }
+-  auto stream = torch::stable::accelerator::getCurrentStream(device);
+-  SX_CUSPARSE_CHECK(cusparseSetStream(handles[device], static_cast<cudaStream_t>(stream.nativeHandle())));
+-  return handles[device];
+-}
+-
+-cusparseSpMMAlg_t default_alg(int32_t device) {
+-  // As in-tree: ALG1 is broken on SM89 as of CUDA 11.8+.
+-  cudaDeviceProp prop;
+-  STD_TORCH_CHECK(cudaGetDeviceProperties(&prop, device) == cudaSuccess, "cudaGetDeviceProperties failed");
+-  return prop.major == 8 && prop.minor == 9 ? CUSPARSE_SPMM_CSR_ALG2 : CUSPARSE_SPMM_CSR_ALG1;
+-}
+-
+-template <typename T> struct CudaType;
+-template <> struct CudaType<float> { using type = float; static constexpr cudaDataType id = CUDA_R_32F; };
+-template <> struct CudaType<double> { using type = double; static constexpr cudaDataType id = CUDA_R_64F; };
+-template <> struct CudaType<c10::complex<float>> { using type = cuComplex; static constexpr cudaDataType id = CUDA_C_32F; };
+-template <> struct CudaType<c10::complex<double>> { using type = cuDoubleComplex; static constexpr cudaDataType id = CUDA_C_64F; };
+-
+-template <typename T>
+-T cast(cdouble v) {
+-  if constexpr (std::is_floating_point_v<T>) {
+-    return static_cast<T>(v.real());
+-  } else {
+-    return T(v.real(), v.imag());
+-  }
+-}
+-
+-bool same_tensor(const Tensor& a, const Tensor& b) {
+-  return a.data_ptr() == b.data_ptr() && vec(a.sizes()) == vec(b.sizes()) &&
+-         vec(a.strides()) == vec(b.strides());
+-}
+-
+-// Port of csrmm2('n', transb, ...): C = alpha * A @ op(B) + beta * C, column-major.
+-template <typename T>
+-void csrmm2(cusparseHandle_t handle, int32_t device, char transb, int64_t m, int64_t n, int64_t k,
+-            int64_t nnz, T alpha, const T* csrval, const int* crow, const int* col, const T* b,
+-            int64_t ldb, T beta, T* c, int64_t ldc, const Tensor& like) {
+-  if (csrval == nullptr || b == nullptr || c == nullptr) return;
+-  STD_TORCH_CHECK(m <= INT_MAX && n <= INT_MAX && k <= INT_MAX && nnz <= INT_MAX && ldb <= INT_MAX && ldc <= INT_MAX,
+-                  "At the moment, cusparseSpMM only supports m, n, k, nnz, ldb, ldc with the bound [val] <= INT_MAX");
+-  using CT = typename CudaType<T>::type;
+-  constexpr cudaDataType vt = CudaType<T>::id;
+-  const auto opa = CUSPARSE_OPERATION_NON_TRANSPOSE;
+-  const auto opb = transb == 'n' ? CUSPARSE_OPERATION_NON_TRANSPOSE : CUSPARSE_OPERATION_TRANSPOSE;
+-
+-  cusparseSpMatDescr_t descA;
+-  SX_CUSPARSE_CHECK(cusparseCreateCsr(&descA, m, k, nnz, const_cast<int*>(crow), const_cast<int*>(col),
+-                                      const_cast<T*>(csrval), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+-                                      CUSPARSE_INDEX_BASE_ZERO, vt));
+-  int64_t kb = k, nb = n;
+-  if (transb != 'n') std::swap(kb, nb);
+-  cusparseDnMatDescr_t descB, descC;
+-  SX_CUSPARSE_CHECK(cusparseCreateDnMat(&descB, kb, nb, ldb, const_cast<T*>(b), vt, CUSPARSE_ORDER_COL));
+-  SX_CUSPARSE_CHECK(cusparseCreateDnMat(&descC, m, n, ldc, c, vt, CUSPARSE_ORDER_COL));
+-
+-  const auto alg = default_alg(device);
+-  size_t buffer_size = 0;
+-  SX_CUSPARSE_CHECK(cusparseSpMM_bufferSize(handle, opa, opb, reinterpret_cast<CT*>(&alpha), descA, descB,
+-                                            reinterpret_cast<CT*>(&beta), descC, vt, alg, &buffer_size));
+-  // The workspace comes from torch's caching allocator, through torch::stable::empty.
+-  Tensor buffer = torch::stable::empty({static_cast<int64_t>(buffer_size)}, ScalarType::Byte,
+-                                       std::nullopt, like.device());
+-  SX_CUSPARSE_CHECK(cusparseSpMM(handle, opa, opb, reinterpret_cast<CT*>(&alpha), descA, descB,
+-                                 reinterpret_cast<CT*>(&beta), descC, vt, alg, buffer.mutable_data_ptr()));
+-  SX_CUSPARSE_CHECK(cusparseDestroySpMat(descA));
+-  SX_CUSPARSE_CHECK(cusparseDestroyDnMat(descB));
+-  SX_CUSPARSE_CHECK(cusparseDestroyDnMat(descC));
+-}
+-
+-template <typename T>
+-void csr_worker(cusparseHandle_t handle, int32_t device, int64_t nnz, int64_t m, int64_t n, int64_t k,
+-                Tensor& r_, cdouble beta, const Tensor& t, cdouble alpha, const Tensor& crow,
+-                const Tensor& col, const Tensor& values, const Tensor& dense) {
+-  const T cast_beta = cast<T>(beta), cast_alpha = cast<T>(alpha);
+-  if (cast_beta == T(0)) {
+-    zero_(r_);
+-  } else if (!same_tensor(t, r_)) {
+-    copy_(r_, t);
+-  }
+-  Tensor r__ = r_;
+-  if (!(r_.stride(0) == 1 && r_.stride(1) == r_.size(0))) {
+-    // column-major copy of r_
+-    // clone(Contiguous), not contiguous(): a (1, m) view with strides (1, 1) is
+-    // already "contiguous" and would keep ldc = 1.
+-    r__ = torch::stable::transpose(
+-        call<Tensor>("aten::clone", "", torch::stable::transpose(r_, 0, 1),
+-                     std::optional<torch::headeronly::MemoryFormat>(torch::headeronly::MemoryFormat::Contiguous)),
+-        0, 1);
+-  }
+-  Tensor dense_ = dense;
+-  char transpose_dense;
+-  if (dense.stride(0) == 1 && dense.stride(1) == dense.size(0)) {
+-    transpose_dense = 'n';
+-  } else if (dense.stride(1) == 1 && dense.stride(0) == dense.size(1)) {
+-    transpose_dense = 't';
+-  } else {
+-    transpose_dense = 't';
+-    dense_ = torch::stable::contiguous(dense);
+-  }
+-  csrmm2<T>(handle, device, transpose_dense, m, n, k, nnz, cast_alpha, values.const_data_ptr<T>(),
+-            crow.const_data_ptr<int32_t>(), col.const_data_ptr<int32_t>(), dense_.const_data_ptr<T>(),
+-            transpose_dense == 'n' ? dense_.stride(1) : dense_.stride(0), cast_beta,
+-            r__.mutable_data_ptr<T>(), r__.stride(1), r_);
+-  if (!same_tensor(r__, r_)) {
+-    copy_(r_, r__);
+-  }
+-}
+-
+-}  // namespace
+-
+-void addmm_out_sparse_dense_cuda(Tensor& r_, const Tensor& t, const Tensor& sparse_,
+-                                 const Tensor& dense, cdouble beta, cdouble alpha) {
+-  STD_TORCH_CHECK(t.is_cuda(), "Expected all tensors to be on the same device. addmm: expected 'self' to be CUDA, but got CPU");
+-  STD_TORCH_CHECK(r_.is_cuda(), "Expected all tensors to be on the same device. addmm: expected 'out' to be CUDA, but got CPU");
+-  STD_TORCH_CHECK(sparse_.is_cuda(), "Expected all tensors to be on the same device. addmm: expected 'mat1' to be CUDA, but got CPU");
+-  STD_TORCH_CHECK(dense.is_cuda(), "Expected all tensors to be on the same device. addmm: expected 'mat2' to be CUDA, but got CPU");
+-  const int32_t device = sparse_.get_device_index();
+-  STD_TORCH_CHECK(r_.get_device_index() == device && t.get_device_index() == device &&
+-                  dense.get_device_index() == device, "addmm: expected all tensors on the same CUDA device");
+-  STD_TORCH_CHECK(dense.dim() == 2, "addmm: 2D tensor expected, got ", dense.dim(), "D tensor");
+-  STD_TORCH_CHECK(sparse_dim(sparse_) == 2,
+-                  "addmm: expected first two dims to be sparse (indices has size 2 at first dim), but got ",
+-                  sparse_dim(sparse_), " sparse dims");
+-  const int64_t m = sparse_.size(0), k = sparse_.size(1), n = dense.size(1);
+-  STD_TORCH_CHECK(t.size(0) == m, "addmm: Argument #1 (t): Expected dim 0 size ", m, ", got ", t.size(0));
+-  STD_TORCH_CHECK(t.size(1) == n, "addmm: Argument #1 (t): Expected dim 1 size ", n, ", got ", t.size(1));
+-  STD_TORCH_CHECK(dense.size(0) == k, "addmm: Argument #3 (dense): Expected dim 0 size ", k, ", got ", dense.size(0));
+-
+-  torch::stable::accelerator::DeviceGuard guard(device);
+-  resize_(r_, {m, n});
+-  const Tensor sparse = coalesce(sparse_);
+-  const int64_t nz = nnz(sparse);
+-  if (nz == 0) {
+-    mul_out(t, scalar_tensor(beta, r_.scalar_type()), r_);
+-    return;
+-  }
+-  const Tensor idx = indices(sparse);
+-  const Tensor vals = sx::values(sparse);
+-  // _to_csr_int: COO row indices -> CSR row offsets, with cusparseXcoo2csr.
+-  const Tensor rows = to_dtype(torch::stable::select(idx, 0, 0), ScalarType::Int);
+-  const Tensor col = to_dtype(torch::stable::select(idx, 0, 1), ScalarType::Int);
+-  STD_TORCH_CHECK(m <= INT_MAX && nz <= INT_MAX,
+-                  "cusparseXcoo2csr only supports m, nnz with the bound [val] <= INT_MAX");
+-  Tensor crow = torch::stable::empty({m + 1}, ScalarType::Int, std::nullopt, sparse.device());
+-  cusparseHandle_t handle = current_handle(device);
+-  SX_CUSPARSE_CHECK(cusparseXcoo2csr(handle, rows.const_data_ptr<int32_t>(), static_cast<int>(nz),
+-                                     static_cast<int>(m), crow.mutable_data_ptr<int32_t>(),
+-                                     CUSPARSE_INDEX_BASE_ZERO));
+-  switch (vals.scalar_type()) {
+-    case ScalarType::Float:
+-      csr_worker<float>(handle, device, nz, m, n, k, r_, beta, t, alpha, crow, col, vals, dense); break;
+-    case ScalarType::Double:
+-      csr_worker<double>(handle, device, nz, m, n, k, r_, beta, t, alpha, crow, col, vals, dense); break;
+-    case ScalarType::ComplexFloat:
+-      csr_worker<c10::complex<float>>(handle, device, nz, m, n, k, r_, beta, t, alpha, crow, col, vals, dense); break;
+-    case ScalarType::ComplexDouble:
+-      csr_worker<c10::complex<double>>(handle, device, nz, m, n, k, r_, beta, t, alpha, crow, col, vals, dense); break;
+-    default:
+-      STD_TORCH_CHECK(false, "\"addmm_sparse_cuda\" not implemented for this dtype");
+-  }
+-}
+-
+-}  // namespace sx
+diff --git a/sparse-ext/csrc/addmm_ops.cpp b/sparse-ext/csrc/addmm_ops.cpp
+deleted file mode 100644
+index 91e83e9..0000000
+--- a/sparse-ext/csrc/addmm_ops.cpp
++++ /dev/null
+@@ -1,40 +0,0 @@
+-// The fully stable route for addmm: sparse_ext::addmm and sparse_ext::addmm_out,
+-// defined with each Scalar as two floats (real, imaginary part), which the stable
+-// boxed kernel can receive. torch_sparse_ext/__init__.py registers aten::addmm,
+-// addmm_ and addmm.out for SparseCPU/SparseCUDA in Python (torch.library), where
+-// beta/alpha arrive as Python numbers, and forwards here. Selected with
+-// TORCH_SPARSE_EXT_ADDMM=python; the default is the C++ bridge in
+-// register_addmm.cpp (module _bridge, not on the stable ABI).
+-#include "addmm.h"
+-
+-namespace {
+-
+-using sx::cdouble;
+-using torch::stable::Tensor;
+-
+-Tensor addmm_f(Tensor self, Tensor mat1, Tensor mat2, double beta_re, double beta_im,
+-               double alpha_re, double alpha_im) {
+-  return sx::addmm(self, mat1, mat2, cdouble(beta_re, beta_im), cdouble(alpha_re, alpha_im),
+-                   std::nullopt, /*expand_self=*/true);
+-}
+-
+-Tensor addmm_out_f(Tensor self, Tensor mat1, Tensor mat2, double beta_re, double beta_im,
+-                   double alpha_re, double alpha_im, bool expand_self, Tensor out) {
+-  sx::addmm(self, mat1, mat2, cdouble(beta_re, beta_im), cdouble(alpha_re, alpha_im), out,
+-            expand_self);
+-  return out;
+-}
+-
+-}  // namespace
+-
+-STABLE_TORCH_LIBRARY(sparse_ext, m) {
+-  m.def("addmm(Tensor self, Tensor mat1, Tensor mat2, float beta_re, float beta_im, "
+-        "float alpha_re, float alpha_im) -> Tensor");
+-  m.def("addmm_out(Tensor self, Tensor mat1, Tensor mat2, float beta_re, float beta_im, "
+-        "float alpha_re, float alpha_im, bool expand_self, Tensor(a!) out) -> Tensor(a!)");
+-}
+-
+-STABLE_TORCH_LIBRARY_IMPL(sparse_ext, CompositeExplicitAutograd, m) {
+-  m.impl("addmm", TORCH_BOX(&addmm_f));
+-  m.impl("addmm_out", TORCH_BOX(&addmm_out_f));
+-}
+diff --git a/sparse-ext/csrc/mul.cpp b/sparse-ext/csrc/mul.cpp
+index 7f2a8ec..3cc1784 100644
+--- a/sparse-ext/csrc/mul.cpp
++++ b/sparse-ext/csrc/mul.cpp
+@@ -10,8 +10,18 @@
+ //   dense dims finds the intersection with aten::sparse_mask over tensors of
+ //   entry positions (in-tree: the internal mul_sparse_sparse_out_stub, which
+ //   is not an operator), and coalesces both inputs first.
++//
++// These kernels override ATen's (registered over them, not instead of
++// them). SPARSETORCH_USE_ATEN=1 at load time skips the aten registrations, so
++// ATen's kernels serve. A per-device call counter (sparse_ext::mul_calls) shows
++// which kernel ran; sparse_ext::mul_out is the same kernel under the package's
++// own name, for callers (a Python registration) that must not reach aten::mul.out.
+ #include "sx.h"
+ 
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++
+ #include <torch/headeronly/util/BFloat16.h>
+ #include <torch/headeronly/util/Half.h>
+ #include <torch/headeronly/util/complex.h>
+@@ -247,23 +257,69 @@ Tensor& mul_out_sparse(const Tensor& t_, const Tensor& src_, Tensor& r, bool cpu
+   return mul_sparse_sparse_out(t_, src_, r);
+ }
+ 
++// Calls of the package's mul kernels: [0] SparseCPU, [1] SparseCUDA.
++std::atomic<int64_t> mul_calls_[2];
++
+ Tensor mul_out_sparse_cpu(Tensor self, Tensor other, Tensor out) {
++  mul_calls_[0]++;
+   mul_out_sparse(self, other, out, /*cpu=*/true);
+   return out;
+ }
+ 
+ Tensor mul_out_sparse_cuda(Tensor self, Tensor other, Tensor out) {
++  mul_calls_[1]++;
+   mul_out_sparse(self, other, out, /*cpu=*/false);
+   return out;
+ }
+ 
++// device: 0 CPU, 1 CUDA. reset: set the counter to 0 after reading it.
++int64_t mul_calls(int64_t device, bool reset) {
++  STD_TORCH_CHECK(device == 0 || device == 1, "sparse_ext::mul_calls: device is 0 (CPU) or 1 (CUDA)");
++  return reset ? mul_calls_[device].exchange(0) : mul_calls_[device].load();
++}
++
++// SPARSETORCH_USE_ATEN=1: leave aten::mul.out to ATen's kernels.
++bool use_aten() {
++  const char* v = std::getenv("SPARSETORCH_USE_ATEN");
++  return v && std::strcmp(v, "1") == 0;
++}
++
++// Read once, at load: the static initializers below (same file, later) use it.
++const bool use_aten_at_load = use_aten();
++
++// Whether this process loaded the package with SPARSETORCH_USE_ATEN=1.
++bool uses_aten() { return use_aten_at_load; }
++
+ }  // namespace
+ }  // namespace sx
+ 
++STABLE_TORCH_LIBRARY(sparse_ext, m) {
++  m.def("mul_calls(int device, bool reset=False) -> int");
++  m.def("uses_aten() -> bool");
++  m.def("mul_out(Tensor self, Tensor other, *, Tensor(a!) out) -> Tensor(a!)");
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, CompositeExplicitAutograd, m) {
++  m.impl("mul_calls", TORCH_BOX(&sx::mul_calls));
++  m.impl("uses_aten", TORCH_BOX(&sx::uses_aten));
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, SparseCPU, m) {
++  m.impl("mul_out", TORCH_BOX(&sx::mul_out_sparse_cpu));
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, SparseCUDA, m) {
++  m.impl("mul_out", TORCH_BOX(&sx::mul_out_sparse_cuda));
++}
++
++// Over ATen's kernels: the dispatcher keeps both and serves the newest
++// (OperatorEntry::registerKernel), warning once per process.
+ STABLE_TORCH_LIBRARY_IMPL(aten, SparseCPU, m) {
++  if (sx::use_aten_at_load) return;
+   m.impl("mul.out", TORCH_BOX(&sx::mul_out_sparse_cpu));
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(aten, SparseCUDA, m) {
++  if (sx::use_aten_at_load) return;
+   m.impl("mul.out", TORCH_BOX(&sx::mul_out_sparse_cuda));
+ }
+diff --git a/sparse-ext/csrc/probe_scalar.cpp b/sparse-ext/csrc/probe_scalar.cpp
+deleted file mode 100644
+index c3715d8..0000000
+--- a/sparse-ext/csrc/probe_scalar.cpp
++++ /dev/null
+@@ -1,21 +0,0 @@
+-// Probe: can a kernel registered through the stable ABI receive a Scalar?
+-// sparse_ext_probe::scalar_arg(Tensor x, Scalar s) gets a raw boxed kernel (no
+-// TORCH_BOX: the stable ABI has no C++ type for Scalar to unbox into). Calling it
+-// shows whether the dispatcher can pass the Scalar argument across.
+-#include <torch/csrc/stable/library.h>
+-
+-namespace {
+-void scalar_arg_boxed(StableIValue* stack, uint64_t num_args, uint64_t num_outputs) {
+-  // Return x unchanged: stack[0] already holds it.
+-  (void)num_args;
+-  (void)num_outputs;
+-}
+-}  // namespace
+-
+-STABLE_TORCH_LIBRARY(sparse_ext_probe, m) {
+-  m.def("scalar_arg(Tensor x, Scalar s) -> Tensor");
+-}
+-
+-STABLE_TORCH_LIBRARY_IMPL(sparse_ext_probe, CompositeExplicitAutograd, m) {
+-  m.impl("scalar_arg", &scalar_arg_boxed);
+-}
+diff --git a/sparse-ext/csrc/register_addmm.cpp b/sparse-ext/csrc/register_addmm.cpp
+deleted file mode 100644
+index 874cba2..0000000
+--- a/sparse-ext/csrc/register_addmm.cpp
++++ /dev/null
+@@ -1,64 +0,0 @@
+-// NOT on the stable ABI: the one translation unit of the package that uses
+-// libtorch's C++ API, and so ties the built package to the torch it was built
+-// against. It exists because aten::addmm, addmm_ and addmm.out take
+-// `Scalar beta, Scalar alpha`, and a stable boxed kernel cannot receive a Scalar
+-// (see probe_scalar.cpp). It does nothing but take the Scalars apart and hand
+-// the tensors, as AtenTensorHandles, to the stable kernel sx_addmm (addmm.cpp).
+-#undef TORCH_TARGET_VERSION
+-
+-#include <ATen/core/Tensor.h>
+-#include <c10/core/Scalar.h>
+-#include <torch/csrc/inductor/aoti_torch/utils.h>
+-#include <torch/library.h>
+-
+-#include "addmm.h"
+-
+-namespace {
+-
+-AtenTensorHandle handle(const at::Tensor& t) {
+-  return torch::aot_inductor::new_tensor_handle(at::Tensor(t));
+-}
+-
+-at::Tensor call(const at::Tensor& self, const at::Tensor& mat1, const at::Tensor& mat2,
+-                const c10::Scalar& beta, const c10::Scalar& alpha, AtenTensorHandle out,
+-                bool expand_self) {
+-  const auto b = beta.toComplexDouble(), a = alpha.toComplexDouble();
+-  AtenTensorHandle r = sx_addmm(handle(self), handle(mat1), handle(mat2), b.real(), b.imag(),
+-                                a.real(), a.imag(), out, expand_self);
+-  at::Tensor result = *torch::aot_inductor::tensor_handle_to_tensor_pointer(r);
+-  aoti_torch_delete_tensor_object(r);
+-  return result;
+-}
+-
+-at::Tensor& addmm_out(const at::Tensor& self, const at::Tensor& mat1, const at::Tensor& mat2,
+-                      const c10::Scalar& beta, const c10::Scalar& alpha, at::Tensor& out) {
+-  call(self, mat1, mat2, beta, alpha, handle(out), /*expand_self=*/true);
+-  return out;
+-}
+-
+-at::Tensor addmm(const at::Tensor& self, const at::Tensor& mat1, const at::Tensor& mat2,
+-                 const c10::Scalar& beta, const c10::Scalar& alpha) {
+-  return call(self, mat1, mat2, beta, alpha, nullptr, /*expand_self=*/true);
+-}
+-
+-at::Tensor& addmm_(at::Tensor& self, const at::Tensor& mat1, const at::Tensor& mat2,
+-                   const c10::Scalar& beta, const c10::Scalar& alpha) {
+-  call(self, mat1, mat2, beta, alpha, handle(self), /*expand_self=*/false);
+-  return self;
+-}
+-
+-}  // namespace
+-
+-TORCH_LIBRARY_IMPL(aten, SparseCPU, m) {
+-  m.impl("addmm.out", addmm_out);
+-  m.impl("addmm", addmm);
+-  m.impl("addmm_", addmm_);
+-}
+-
+-#ifdef SX_USE_CUDA
+-TORCH_LIBRARY_IMPL(aten, SparseCUDA, m) {
+-  m.impl("addmm.out", addmm_out);
+-  m.impl("addmm", addmm);
+-  m.impl("addmm_", addmm_);
+-}
+-#endif
+diff --git a/sparse-ext/setup.py b/sparse-ext/setup.py
+index 56d20b1..9700647 100644
+--- a/sparse-ext/setup.py
++++ b/sparse-ext/setup.py
+@@ -1,5 +1,6 @@
+-# sparse-ext: COO mul / addmm kernels registered into aten's SparseCPU and
+-# SparseCUDA dispatch keys from outside the pytorch tree.
++# sparse-ext: the COO mul family (aten::mul.out for SparseCPU and SparseCUDA),
++# registered over ATen's kernels from outside the pytorch tree.
++# SPARSETORCH_USE_ATEN=1 at load time skips that registration.
+ #
+ #   pip install --no-build-isolation -v sparse-ext
+ import os
+@@ -11,46 +12,23 @@ os.environ["TORCH_DEVICE_BACKEND_AUTOLOAD"] = "0"
+ 
+ import torch
+ from setuptools import setup
+-from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
++from torch.utils.cpp_extension import CppExtension, BuildExtension
+ 
+ ROOT = Path(__file__).parent
+ CSRC = ROOT / "csrc"
+ 
+-# Stable ABI target: 2.13, the oldest that builds: addmm_cuda.cu uses
+-# torch::stable::accelerator::Stream::nativeHandle (2.13); the rest builds at 2.10.
+-TARGET = "-DTORCH_TARGET_VERSION=0x020d000000000000"
+-
+-use_cuda = torch.cuda.is_available() or bool(torch.version.cuda)
+-# _C: stable ABI only (mul, addmm kernels, the float-argument addmm ops, probe).
+-# _bridge: the C++ registration of aten::addmm* (register_addmm.cpp, not stable)
+-# with its own copy of the addmm kernels; loaded unless TORCH_SPARSE_EXT_ADDMM=python.
+-bridge_src = CSRC / "register_addmm.cpp"
+-cpp = sorted(p for p in CSRC.glob("*.cpp") if p != bridge_src)
+-cu = sorted(CSRC.glob("*.cu"))
+-addmm_src = [CSRC / "addmm.cpp"] + cu
+-cxx = ["-O3", TARGET]
+-kwargs = {}
+-if use_cuda:
+-    cxx.append("-DSX_USE_CUDA")
+-    kwargs["libraries"] = ["cusparse"]
+-    ext_cls = CUDAExtension
+-    extra = {"cxx": cxx, "nvcc": ["-O3", TARGET, "-DSX_USE_CUDA"]}
+-else:
+-    cu, addmm_src = [], [CSRC / "addmm.cpp"]
+-    ext_cls = CppExtension
+-    extra = {"cxx": cxx}
+-
+-
+-def ext(name, srcs):
+-    return ext_cls(f"torch_sparse_ext.{name}", sources=[str(p) for p in srcs],
+-                   extra_compile_args=extra, py_limited_api=True, **kwargs)
+-
++# Stable ABI target: 2.10 is enough for mul.cpp (the 2.13 of the two-family package came from
++# addmm_cuda.cu's Stream::nativeHandle, not in this package).
++TARGET = "-DTORCH_TARGET_VERSION=0x020a000000000000"
+ 
++# mul.cpp has no device code: the CUDA kernel is composed of dispatcher calls,
++# so one C++ module serves both keys.
+ setup(
+     name="torch-sparse-ext",
+-    version="0.0.1",
++    version="0.0.2",
+     packages=["torch_sparse_ext"],
+-    ext_modules=[ext("_C", cpp + cu), ext("_bridge", [bridge_src] + addmm_src)],
++    ext_modules=[CppExtension("torch_sparse_ext._C", sources=[str(CSRC / "mul.cpp")],
++                              extra_compile_args={"cxx": ["-O3", TARGET]}, py_limited_api=True)],
+     cmdclass={"build_ext": BuildExtension},
+     options={"bdist_wheel": {"py_limited_api": "cp39"}},
+     entry_points={"torch.backends": ["sparse_ext = torch_sparse_ext:_autoload"]},
+diff --git a/sparse-ext/torch_sparse_ext/__init__.py b/sparse-ext/torch_sparse_ext/__init__.py
+index c8c5b4a..60367bf 100644
+--- a/sparse-ext/torch_sparse_ext/__init__.py
++++ b/sparse-ext/torch_sparse_ext/__init__.py
+@@ -1,16 +1,15 @@
+-"""COO mul / addmm kernels for aten's SparseCPU and SparseCUDA keys, from outside
+-the pytorch tree. Loaded by ``import torch`` through the ``torch.backends`` entry
+-point; with TORCH_DEVICE_BACKEND_AUTOLOAD=0, ``import torch_sparse_ext`` loads it.
+-
+-aten::addmm, addmm_ and addmm.out take Scalars, which a stable-ABI kernel cannot
+-receive. Two routes register them:
+-- TORCH_SPARSE_EXT_ADDMM=cpp (default): the C++ bridge, module _bridge (not on the
+-  stable ABI: tied to the torch it was built against);
+-- TORCH_SPARSE_EXT_ADDMM=python: Python kernels (torch.library) that split each
+-  Scalar into two floats and call the stable ops sparse_ext::addmm{,_out} in _C.
+-  Only stable-ABI code is loaded.
++"""The COO mul family (aten::mul.out for SparseCPU and SparseCUDA) from outside the
++pytorch tree, registered over ATen's kernels. Loaded by ``import torch``
++through the ``torch.backends`` entry point; with TORCH_DEVICE_BACKEND_AUTOLOAD=0,
++``import torch_sparse_ext`` loads it.
++
++SPARSETORCH_USE_ATEN=1 when the package loads: the package skips its aten
++registrations and ATen's kernels serve. The package's own ops stay defined:
++- torch.ops.sparse_ext.mul_calls(device, reset=False): calls of the package's
++  kernel, device 0 CPU, 1 CUDA;
++- torch.ops.sparse_ext.uses_aten(): whether the switch was on at load;
++- torch.ops.sparse_ext.mul_out(self, other, *, out): the same kernel by its own name.
+ """
+-import os
+ from pathlib import Path
+ 
+ import torch
+@@ -18,31 +17,15 @@ import torch
+ _dir = Path(__file__).parent
+ torch.ops.load_library(str(next(_dir.glob("_C*.so"))))
+ 
+-ADDMM_ROUTE = os.environ.get("TORCH_SPARSE_EXT_ADDMM", "cpp")
+-if ADDMM_ROUTE == "cpp":
+-    torch.ops.load_library(str(next(_dir.glob("_bridge*.so"))))
+-elif ADDMM_ROUTE == "python":
+-    def _split(x):
+-        c = complex(x)
+-        return c.real, c.imag
+-
+-    def _addmm(self, mat1, mat2, *, beta=1, alpha=1):
+-        return torch.ops.sparse_ext.addmm(self, mat1, mat2, *_split(beta), *_split(alpha))
+-
+-    def _addmm_out(self, mat1, mat2, *, beta=1, alpha=1, out):
+-        return torch.ops.sparse_ext.addmm_out(self, mat1, mat2, *_split(beta), *_split(alpha), True, out)
+-
+-    def _addmm_(self, mat1, mat2, *, beta=1, alpha=1):
+-        torch.ops.sparse_ext.addmm_out(self, mat1, mat2, *_split(beta), *_split(alpha), False, self)
+-        return self
+-
+-    _lib = torch.library.Library("aten", "IMPL")
+-    for _key in ("SparseCPU", "SparseCUDA"):
+-        _lib.impl("addmm", _addmm, _key)
+-        _lib.impl("addmm.out", _addmm_out, _key)
+-        _lib.impl("addmm_", _addmm_, _key)
+-else:
+-    raise ValueError(f"TORCH_SPARSE_EXT_ADDMM={ADDMM_ROUTE!r}: expected 'cpp' or 'python'")
++
++def mul_calls(reset=False):
++    """{'cpu': n, 'cuda': n}: calls of the package's mul kernel."""
++    return {"cpu": torch.ops.sparse_ext.mul_calls(0, reset),
++            "cuda": torch.ops.sparse_ext.mul_calls(1, reset)}
++
++
++def uses_aten():
++    return torch.ops.sparse_ext.uses_aten()
+ 
+ 
+ def _autoload():

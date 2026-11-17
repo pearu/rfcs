@@ -103,7 +103,7 @@ New features should preferably land in the new repo, not in core.
 |---|---|---|
 | **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Governance is decided (question 2). The new repo gets named owners and a design document (below). F starts; the semi-structured API warns "moving to TorchAO". | today |
 | **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparsetorch`, laid out as the new repo. | alias |
-| **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR drops one from ATen and bumps the package's pin. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. `Backend::allreduce_sparse` deprecated. | dependency of torch, pinned `==`, built by pytorch CI |
+| **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR registers one family from the package over ATen's kernels and bumps the package's pin. ATen's copy stays, frozen, behind a switch. It is deleted only after a release in which the package's kernel shipped and passed the sparse tests. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. `Backend::allreduce_sparse` deprecated. | dependency of torch, pinned `==`, built by pytorch CI |
 | **R3** | The rest: autograd for sparse-only ops, the c10d sparse kernels, the 14 MPS-only kernels. Sparse test files leave pytorch CI. | dependency, `>=` |
 | **R4** | `Backend::allreduce_sparse` removed. | dependency |
 
@@ -137,6 +137,11 @@ release of deprecation (R2 warns, R4 removes).
 same generic kernel as CPU/CUDA. The package registers each moved family for every key
 that names it today. pytorch's XPU and MPS jobs test it during R2–R3; after that, the
 package needs XPU and macOS runners, or those maintainers test it.
+
+**Stop rule.** If the package misses a release, or its owners can't continue, the
+next release switches to ATen's copies and moves nothing more. If no one resumes
+within two releases, the families already moved come back to ATen verbatim. The
+package's dependency is then dropped, and sparse stays in core under E + D + F.
 
 **Who could do the work.** These people have a record in the code that moves. They are
 suggested candidates; none has agreed to take part yet:
@@ -204,6 +209,11 @@ only; diffs and results in [`RFC-00xx-assets/`](RFC-00xx-assets/README.md).
   `mul.cpp`'s extra copies (no setter) and `addmm_cuda.cu`'s own handle pool are the
   other two pieces.
 
+A third experiment kept ATen's `mul` kernels and registered the package's over them
+([`sparse-ext-override.diff`](RFC-00xx-assets/sparse-ext-override.diff)). Results were
+identical with the package, with a switch back to ATen, and without the package.
+Removing a Python registration at run time restored ATen's kernel.
+
 ## **Metrics**
 
 - Sparse PRs and reviews reaching core reviewers: should drop to the part kept in core.
@@ -217,6 +227,7 @@ only; diffs and results in [`RFC-00xx-assets/`](RFC-00xx-assets/README.md).
 | Risk | If it happens |
 |---|---|
 | No owners for the new project | A is worse than code in core. The fallback is to be decided; one option is to stop at E + D + F and freeze new backends. |
+| Work stops midway (R2–R3): owners leave, or the package misses a release | Every family moved in the last release still has its frozen ATen copy. A switch makes torch use them again. See the stop rule. |
 | Core does not add the three stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a pin, on every platform. The release order above is untested, and so is conda. |
