@@ -138,6 +138,20 @@ same generic kernel as CPU/CUDA. The package registers each moved family for eve
 that names it today. pytorch's XPU and MPS jobs test it during R2–R3; after that, the
 package needs XPU and macOS runners, or those maintainers test it.
 
+**Who could do the work.** These people have a record in the code that moves. They are
+suggested candidates; none has agreed to take part yet:
+- pearu: sparse layouts and kernels ([pytorch#129645](https://github.com/pytorch/pytorch/pull/129645)), and stable-ABI work: [pytorch#167923](https://github.com/pytorch/pytorch/pull/167923)
+  and the port of torchaudio to the stable ABI ([pytorch/audio#4137](https://github.com/pytorch/audio/pull/4137), [pytorch/audio#4142](https://github.com/pytorch/audio/pull/4142)).
+- amjames: sparse compressed kernels, and a sparse code owner ([pytorch#104062](https://github.com/pytorch/pytorch/pull/104062)).
+- nikitaved: sparse COO and compressed kernels on CPU and CUDA ([pytorch#72710](https://github.com/pytorch/pytorch/pull/72710),
+  [pytorch#202778](https://github.com/pytorch/pytorch/pull/202778)).
+- alexsamardzic: 2:4 semi-structured sparsity and CUTLASS kernels, in pytorch and
+  TorchAO ([pytorch#123473](https://github.com/pytorch/pytorch/pull/123473), [pytorch/ao#1940](https://github.com/pytorch/ao/pull/1940)).
+- Isalia20: the MPS sparse kernels ([pytorch#167013](https://github.com/pytorch/pytorch/pull/167013), [pytorch#169125](https://github.com/pytorch/pytorch/pull/169125), [pytorch#169368](https://github.com/pytorch/pytorch/pull/169368)).
+
+Help also comes from the community. In the last 12 months, 67 other people opened sparse
+PRs, and 71 opened or commented on sparse issues.[^community]
+
 ### What core adds
 
 | Release | Core adds |
@@ -272,7 +286,7 @@ question.
    Ask: albanD, malfet
 2. Governance of the new repo: who owns it, and who breaks ties on design decisions?
    This must be decided before the move starts (R0). Without owners, the fallback is
-   to be decided; stopping at E + D + F is one option.\
+   to be decided; stopping at E + D + F is one option. See "Who could do the work".\
    Ask: albanD, malfet, amjames, eqy, nikitaved
 3. Will core commit to the agreement on new backends?\
    Ask: malfet, EikanWang
@@ -318,6 +332,9 @@ question.
     which runs a fixed test list without the sparse files ([run_test.py:1994-2013][mpslist]).
     `test_sparse.py` allows MPS for COO only ([test_sparse.py:5920][tsmps]). The estimate
     scales CUDA's device time for the two sparse test files, 2026-11-02, to MPS.
+[^community]: GitHub, issues and PRs labeled `module: sparse` or `release notes: sparse`,
+    created 2025-11-16 to 2026-11-16: distinct authors and commenters. Bots, the people named
+    above and the core maintainers are excluded.
 [^xpu]: GitHub API, 2026-11-16: commits to `third_party/xpu.txt`, 2025-11-16 to 2026-11-16.
 
 ## Resolution
