@@ -140,12 +140,14 @@ same generic kernel as CPU/CUDA. The package registers each moved family for eve
 that names it today. pytorch's XPU and MPS jobs test it during R2–R3; after that, the
 package needs XPU and macOS runners, or those maintainers test it.
 
-**Stop rule.** If the package misses a release, or its owners can't continue, the next
-release switches to ATen's copies and moves nothing more. If no one resumes within two
-releases, the families already moved come back to ATen verbatim. The package's
-dependency is then dropped, and sparse stays in core under E + D + F. The package's CI
-runs the sparse tests twice, with its kernels and with the switch, against the current
-torch, so the way back stays tested while ATen's copies exist.
+**Every release is a safe place to stop, and to reconsider the plan.** ATen's copy of a
+family is deleted only after a release in which the package's kernels shipped and passed
+the sparse tests. Until then the switch can bring ATen's copies back for any release,
+for example when the package isn't ready. If plans change, whether to continue, change
+course or move code back is decided then, under the governance of question 2, starting
+from a working torch. The package's CI runs the sparse tests twice, with its kernels and
+with the switch, against the current torch, so the way back stays tested while ATen's
+copies exist.
 
 **Who could do the work.** These people have a record in the code that moves. They are
 suggested candidates; none has agreed to take part yet:
@@ -231,7 +233,7 @@ Removing a Python registration at run time restored ATen's kernel.
 | Risk | If it happens |
 |---|---|
 | No owners for the new project | A is worse than code in core. The fallback is to be decided; one option is to stop at E + D + F and freeze new backends. |
-| Work stops midway (R2–R3): owners leave, or the package misses a release | Every family moved in the last release still has its frozen ATen copy. A switch makes torch use them again. See the stop rule. |
+| Work stalls or plans change (R2–R3) | Each release is still working. Families not yet deleted from ATen can switch back. The next step is decided under question 2. |
 | Core does not add the three stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a pin, on every platform. The release order above is untested, and so is conda. |
