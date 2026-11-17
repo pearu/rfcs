@@ -254,11 +254,12 @@ Removing a Python registration at run time restored ATen's kernel.
 A fourth deleted five families from ATen, CPU and CUDA: `sin`, `abs`, `log1p`,
 `_sparse_softmax` and `_to_sparse_csr`, the last under dense keys too. The package
 registered them ([`pytorch-delete.diff`](RFC-00xx-assets/pytorch-delete.diff),
-[`sparse-ext-delete.diff`](RFC-00xx-assets/sparse-ext-delete.diff)). With the
-package, 2,171 targeted tests gave the same result as main, per test, and
-gradcheck passed through core's unchanged formulas. Without it, every failure was
-an error, none a wrong result. A backend fallback missed composite and dense-key
-kernels, hence the stubs.
+[`sparse-ext-delete.diff`](RFC-00xx-assets/sparse-ext-delete.diff)). With the package,
+2,171 targeted tests gave the same result as main, per test, and gradcheck passed
+through core's unchanged formulas. Without it, every failure was an error, none a wrong
+result. `_sparse_softmax` needed a C++ bridge: a stable kernel's `IndexError` reaches
+Python as `RuntimeError`, the fourth piece. A backend fallback missed composite and
+dense-key kernels, hence the stubs.
 
 ## **Metrics**
 
@@ -285,7 +286,7 @@ kernels, hence the stubs.
 | | Option | What moves | Who reviews sparse PRs | Why it loses, as the destination |
 |---|---|---|---|---|
 | 0 | As today | nothing | emeritus sparse and core maintainers | no owner for sparse; review falls on emeritus and core maintainers |
-| **A** | Separate project | kernels, autograd, Python; core keeps layouts, keys, TensorImpls | the new repo's owners | **proposed** |
+| **A** | Separate project | kernels, Python; core keeps layouts, keys, TensorImpls, autograd formulas | the new repo's owners | **proposed** |
 | B | Core keeps the five layouts; other backends as plugins | MPS and later backends | core, for CPU/CUDA | CPU/CUDA code and its PRs stay in core with no owner |
 | C | The functorch path | Python, into an in-repo package | core | review and CI stay in core; cheap as A's first step |
 | D | Sparse tests in their own config | nothing | core | saves only CI; needed by A anyway |
