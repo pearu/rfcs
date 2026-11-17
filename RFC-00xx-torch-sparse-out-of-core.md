@@ -19,12 +19,10 @@ All pytorch line numbers below are at commit
   package first (C). At once: a maintenance policy (E) and a sparse test config (D).
   Alongside: semi-structured (2:4) sparsity moves to TorchAO (F).
 - No Python name breaks: torch depends on the new package, so `import torch` brings
-  `torch.sparse` as today. One C++ method for c10d backends is deprecated and removed
-  (R2→R4).
-- Four releases (R0–R3, about eight months), plus R4 for the last ATen copies and that
-  C++ removal.
-- Fallback, if core does not add three stable-ABI pieces: the torch-xpu-ops model (G).
-- The asks of core: owners for the new repo; three stable-ABI pieces; building the
+  `torch.sparse` as today.
+- Four releases (R0–R3, about eight months), plus R4 for the last ATen copies.
+- Fallback, if core does not add four stable-ABI pieces: the torch-xpu-ops model (G).
+- The asks of core: owners for the new repo; four stable-ABI pieces; building the
   package from a commit pin in CI, as for triton; small PRs that let sparse support a
   new backend.
 
@@ -77,16 +75,17 @@ the package's own CI decides which backends to cover, and pays for it.
 |---|---|
 | Layout values `sparse_coo`, `sparse_csr/csc/bsr/bsc` | part of the stable ABI's enum ([Layout.h:11-21][layout]) |
 | Dispatch keys `Sparse`, `SparseCsr` | outside code cannot add a functionality key ([DispatchKey.h:211-213][dk]) |
-| `SparseTensorImpl`, `SparseCsrTensorImpl`, with ~20 constructor and accessor ops | core autograd reads them |
+| `SparseTensorImpl`, `SparseCsrTensorImpl`, with the 29 entries that build, read or copy a sparse tensor | core autograd reads them |
 | Generic gradient accumulation | picks in-place or out-of-place add by layout ([accumulate_grad.h:188-239][acc]) |
 | DDP bucketing of sparse gradients | set in the reducer ([reducer.cpp:91-162][red]) |
 | The serialization name `torch._utils._rebuild_sparse_tensor` | saved files name it ([_utils.py:369][rebuild]) |
 | `torch.backends.cusparselt` | documented without a prototype label ([backends.md:286-301][cslt]); cuSPARSELt stays a torch wheel dependency ([torch/\_\_init\_\_.py:402][preload]) |
 | `torch.masked` | prototype, mostly strided |
 | The cuSPARSE handle pool | dense MAGMA code uses it ([MagmaUtils.h:35][magma]); exposed through the stable ABI in R1 |
+| Autograd formulas for sparse ops | they belong to the op, with its schema (see “How torch calls the package”) |
+| The c10d sparse allreduce | it needs `ProcessGroup` and the Gloo backend ([Ops.cpp:795-801][ops]) |
 
-Everything else moves: the kernels (~26 k lines), autograd for sparse ops,
-`torch/sparse/*`, `SparseAdam`, and the c10d sparse kernels ([Ops.cpp:795-801][ops]).
+Everything else moves: the kernels (~26 k lines), `torch/sparse/*` and `SparseAdam`.
 
 ### The migration
 
@@ -104,9 +103,9 @@ New features should preferably land in the new repo, not in core.
 |---|---|---|
 | **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Governance is decided (question 2). The new repo gets named owners and a design document (below). F starts; the semi-structured API warns "moving to TorchAO". | today |
 | **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparsetorch`, laid out as the new repo. | alias |
-| **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR registers one family from the package over ATen's kernels and bumps the package's pin. ATen's copy stays, frozen, behind a switch. It is deleted only after a release in which the package's kernel shipped and passed the sparse tests. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. `Backend::allreduce_sparse` deprecated. | dependency of torch, pinned `==`, built by pytorch CI |
-| **R3** | The rest: autograd for sparse-only ops, the c10d sparse kernels, the 14 MPS-only kernels. ATen copies of R2's families deleted. Sparse test files leave pytorch CI. | dependency, `>=` |
-| **R4** | ATen copies of R3's families deleted. `Backend::allreduce_sparse` removed. | dependency |
+| **R2** | Kernels move, one family per PR. A family is an op with all its variants (functional, in-place, `out=`). Each PR registers one family from the package over ATen's kernels and bumps the package's pin. ATen's copy stays, frozen, behind a switch. It is deleted only after a release in which the package's kernel shipped and passed the sparse tests. The package builds on the stable ABI and loads through a `torch.backends` entry point. F done. | dependency of torch, pinned `==`, built by pytorch CI |
+| **R3** | The rest, the 14 MPS-only kernels among them. ATen copies of R2's families deleted. Sparse test files leave pytorch CI. | dependency, `>=` |
+| **R4** | ATen copies of R3's families deleted. | dependency |
 
 Users installing the package themselves is not proposed; that is a later decision.
 
@@ -131,8 +130,7 @@ package is built on torch N−1's stable ABI and released first; torch N pins it
 serve.
 
 **Why four releases.** No Python name breaks, so the pace is set by the work, not by
-deprecation: R1 is mechanical, R2–R3 carry the kernels. The C++ c10d method needs a
-release of deprecation (R2 warns, R4 removes).
+deprecation: R1 is mechanical, R2–R3 carry the kernels.
 
 **XPU and MPS.** 156 of 173 `SparseXPU`, 128 of 139 `SparseCsrXPU`, 147 of 161
 `SparseMPS` and 13 of 13 `SparseCsrMPS` entries in `native_functions.yaml` name the
@@ -163,13 +161,46 @@ suggested candidates; none has agreed to take part yet:
 Help also comes from the community. In the last 12 months, 67 other people opened sparse
 PRs, and 71 opened or commented on sparse issues.[^community]
 
+### How torch calls the package, and the hard cases
+
+**How it works.**
+- Core keeps every operator schema and its autograd formula. A sparse call goes through
+  the dispatcher to the kernel registered for its key, and the package registers those
+  kernels through the stable ABI ([OperatorEntry.cpp:397-479][dispatch-order]).
+- Built that way, the package imports only libtorch's C functions, which carry the ABI
+  version ([shim.h:16-37][shim-c]), and no C++ symbols. Where a kernel needs a
+  `Scalar` or must raise a typed error such as `IndexError`, the stable ABI has no
+  way yet. That kernel uses a small C++ bridge until it does.
+- Core keeps the 29 sparse entries that build, read or copy a sparse tensor, so torch
+  without the package can still load, print and move one.
+
+| Hard case | How it moves |
+|---|---|
+| c10d sparse allreduce ([Ops.cpp:795-801][ops]) | Stays in core. It needs `ProcessGroup` and the Gloo backend, which the stable ABI doesn't reach. |
+| Autograd | Formulas belong to the op and stay with the schemas; sparse work inside them moves as kernels; masked-semantics ops keep their meaning. |
+| Package absent after a deletion | Each deleted kernel leaves a generated stub in ATen that says "install `sparsetorch`". A backend fallback would not do: composite kernels run ahead of it (37 ops, plus 53 `structured_delegate` ops on the compressed layouts), it doesn't cover dense keys, and it would claim ops that never moved. The package overrides the stubs, so the dispatcher's override warning must be silent for them. |
+| Dense-to-sparse conversions ([native_functions.yaml:7585][nf-tosparse]) | One family. The package registers it under the dense keys too, and its stubs cover the dense keys. |
+| MPS kernels | Ported to the stable ABI's Metal shim ([shim_mps.h:20-101][shim-mps]). This route is untested. ATen's copy stays behind the switch until a macOS runner tests the port. |
+| MKL and cuSPARSE | cuSPARSE through the stable ABI (R1). For MKL, the package's owners choose between the shim and their own kernels. |
+| Meta kernels | Registered with each family. 150 of 153 are the CPU kernel itself. |
+| Inductor's 2:4 lowering ([mm.py:1128-1174][mm-lower]) | Stays until TorchAO has its own op (F), then goes with the `aten` op. |
+
+Replacing the masked-semantics ops with `torch.masked` is a later decision under
+pytorch's deprecation policy, not part of the move.
+
+**Backward compatibility.** Each release is backward compatible with the previous
+one. With the package, five families moved and deleted from ATen gave the same result
+as torch's main branch, per test, gradients included. Until a family's ATen copy is
+deleted, the switch restores it. After that, a missing package gives an error, never a
+wrong result (see "Evidence").
+
 ### What core adds
 
 | Release | Core adds |
 |---|---|
 | R0 | the `sparse` test config; a marker for the 122 sparse tests in core test files |
-| R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS. **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops; (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle.** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
-| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; an "install `sparsetorch`" error when it is absent; a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
+| R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS. **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops (in progress: [pytorch#203903](https://github.com/pytorch/pytorch/pull/203903), a draft); (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle; (4) typed exceptions: a kernel's `IndexError` reaches Python as `RuntimeError` (the message already does, [pytorch#180135](https://github.com/pytorch/pytorch/pull/180135)).** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
+| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; a stub, generated for each deleted sparse kernel, that says "install `sparsetorch`", and no override warning when the package replaces a stub ([OperatorEntry.cpp:213-225][override-warn]); a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
 | R3 | an extension point for `Adagrad`'s sparse step |
 
 ### New backends: an agreement with core
@@ -193,7 +224,7 @@ with no kernel code in it. The understanding to ask for:
 3. The sparse project decides which backends to add, by its own bar: user demand and
    an owner who commits.
 
-### Evidence: two kernel families moved
+### Evidence: kernel families moved
 
 COO `mul` and `addmm`, CPU and CUDA, were removed from ATen and registered from a
 stable-ABI package (target 2.13) that `import torch` loads. Measured on two families
@@ -220,6 +251,15 @@ A third experiment kept ATen's `mul` kernels and registered the package's over t
 identical with the package, with a switch back to ATen, and without the package.
 Removing a Python registration at run time restored ATen's kernel.
 
+A fourth deleted five families from ATen, CPU and CUDA: `sin`, `abs`, `log1p`,
+`_sparse_softmax` and `_to_sparse_csr`, the last under dense keys too. The package
+registered them ([`pytorch-delete.diff`](RFC-00xx-assets/pytorch-delete.diff),
+[`sparse-ext-delete.diff`](RFC-00xx-assets/sparse-ext-delete.diff)). With the
+package, 2,171 targeted tests gave the same result as main, per test, and
+gradcheck passed through core's unchanged formulas. Without it, every failure was
+an error, none a wrong result. A backend fallback missed composite and dense-key
+kernels, hence the stubs.
+
 ## **Metrics**
 
 - Sparse PRs and reviews reaching core reviewers: should drop to the part kept in core.
@@ -234,7 +274,7 @@ Removing a Python registration at run time restored ATen's kernel.
 |---|---|
 | No owners for the new project | A is worse than code in core. The fallback is to be decided; one option is to stop at E + D + F and freeze new backends. |
 | Work stalls or plans change (R2–R3) | Each release is still working. Families not yet deleted from ATen can switch back. The next step is decided under question 2. |
-| Core does not add the three stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
+| Core does not add the four stable-ABI pieces | Fall back to G. Or move kernels as above, at its cost per call. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a pin, on every platform. The release order above is untested, and so is conda. |
 | Hidden sparse paths in core (259 files mention sparse) | Found only by the 122 core sparse tests run without the package. |
@@ -259,7 +299,7 @@ Removing a Python registration at run time restored ATen's kernel.
 |---|---|---|
 | Maintenance | Sparse PRs leave core. Coupling is through the aten schemas the package calls (~30 for the two families moved), which change under BC rules. A pin in R2–R3 only. | Registrations stay in core: a new op or backend needs a core PR. Internal ATen changes can break the sparse repo. A pin to bump about weekly: XPU's moved 61 times in 12 months, with 3 reverts.[^xpu] |
 | Users | No Python name breaks. Risks: a dependency cycle; a broken package breaks `import torch`. | No change. |
-| Effort | The three stable-ABI pieces first. | Files move; a pin and a CMake block ([CMakeLists.txt:1266-1336][xpucmake]). |
+| Effort | The four stable-ABI pieces first. | Files move; a pin and a CMake block ([CMakeLists.txt:1266-1336][xpucmake]). |
 | CI | Sparse leaves pytorch's jobs. | Sparse is built in every job. |
 
 G wins on users and effort; A on maintenance. G couples core to sparse for good, and
@@ -314,7 +354,7 @@ question.
    Ask: jerryzh168, vkuzo, amjames
 6. Is four releases the right pace, or should R2 and R3 be one?\
    Ask: atalman, malfet
-7. Will core add the three stable-ABI pieces in R1? Who reviews them?\
+7. Will core add the four stable-ABI pieces in R1? Who reviews them?\
    Ask: janeyx99, albanD; for the cuSPARSE handle, also eqy, nikitaved
 8. If not, would core take G for sparse, as for XPU? Who would bump the pin
    weekly?\
@@ -424,3 +464,9 @@ Not implementing on project X now. Will revisit the decision in 1 year.
 [macmps]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/.github/workflows/mac-mps.yml#L4-L8
 [mpslist]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/test/run_test.py#L1994-L2013
 [tsmps]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/test/test_sparse.py#L5920
+[dispatch-order]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/core/dispatch/OperatorEntry.cpp#L397-L479
+[shim-c]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/csrc/stable/c/shim.h#L16-L37
+[nf-tosparse]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/native/native_functions.yaml#L7585
+[shim-mps]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/csrc/inductor/aoti_torch/c/shim_mps.h#L20-L101
+[mm-lower]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/_inductor/kernel/mm.py#L1128-L1174
+[override-warn]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/core/dispatch/OperatorEntry.cpp#L213-L225

@@ -1,0 +1,197 @@
+diff --git a/aten/src/ATen/native/native_functions.yaml b/aten/src/ATen/native/native_functions.yaml
+index e9f625cc72b..56ddea055cb 100644
+--- a/aten/src/ATen/native/native_functions.yaml
++++ b/aten/src/ATen/native/native_functions.yaml
+@@ -329,8 +329,9 @@
+   variants: function, method
+   dispatch:
+     CompositeExplicitAutograd: abs
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: abs_sparse
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMPS, SparseCsrMeta, SparseCsrXPU: abs_sparse_csr
++    SparseMPS, SparseXPU: abs_sparse
++    SparseCPU, SparseCUDA, SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta: abs_sparse_moved
++    SparseCsrMPS, SparseCsrXPU: abs_sparse_csr
+     NestedTensorCPU, NestedTensorHPU, NestedTensorCUDA, NestedTensorXPU: NestedTensor_abs
+   tags: [core, pointwise]
+ 
+@@ -339,16 +340,18 @@
+   variants: function, method
+   dispatch:
+     CompositeExplicitAutograd: abs_
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: abs_sparse_
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMPS, SparseCsrMeta, SparseCsrXPU: abs_sparse_csr_
++    SparseMPS, SparseXPU: abs_sparse_
++    SparseCPU, SparseCUDA, SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta: abs_sparse_moved_
++    SparseCsrMPS, SparseCsrXPU: abs_sparse_csr_
+     NestedTensorCPU, NestedTensorHPU, NestedTensorCUDA, NestedTensorXPU: NestedTensor_abs_
+ 
+ - func: abs.out(Tensor self, *, Tensor(a!) out) -> Tensor(a!)
+   device_check: NoCheck   # TensorIterator
+   dispatch:
+     CPU, CUDA, MPS, MTIA, XPU: abs_out
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: abs_sparse_out
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMPS, SparseCsrMeta, SparseCsrXPU: abs_sparse_csr_out
++    SparseMPS, SparseXPU: abs_sparse_out
++    SparseCPU, SparseCUDA, SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta: abs_sparse_moved_out
++    SparseCsrMPS, SparseCsrXPU: abs_sparse_csr_out
+   tags: pointwise
+ 
+ # Note [Adding an alias]
+@@ -3543,8 +3546,8 @@
+   structured_delegate: log1p.out
+   variants: function, method
+   dispatch:
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: log1p_sparse
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: log1p_sparse_csr
++    SparseMPS, SparseXPU: log1p_sparse
++    SparseCsrXPU: log1p_sparse_csr
+   tags: [core, pointwise]
+ 
+ - func: log1p_(Tensor(a!) self) -> Tensor(a!)
+@@ -3552,8 +3555,8 @@
+   structured_delegate: log1p.out
+   variants: function, method
+   dispatch:
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: log1p_sparse_
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: log1p_sparse_csr_
++    SparseMPS, SparseXPU: log1p_sparse_
++    SparseCsrXPU: log1p_sparse_csr_
+   tags: pointwise
+ 
+ - func: log1p.out(Tensor self, *, Tensor(a!) out) -> Tensor(a!)
+@@ -3562,8 +3565,8 @@
+   structured_inherits: TensorIteratorBase
+   dispatch:
+     CPU, CUDA, MPS, XPU: log1p_out
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: log1p_sparse_out
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: log1p_sparse_csr_out
++    SparseMPS, SparseXPU: log1p_sparse_out
++    SparseCsrXPU: log1p_sparse_csr_out
+   tags: pointwise
+ 
+ - func: log2(Tensor self) -> Tensor
+@@ -5387,8 +5390,8 @@
+   structured_delegate: sin.out
+   variants: function, method
+   dispatch:
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: sin_sparse_csr
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: sin_sparse
++    SparseCsrXPU: sin_sparse_csr
++    SparseMPS, SparseXPU: sin_sparse
+     NestedTensorCPU, NestedTensorHPU, NestedTensorCUDA, NestedTensorXPU: NestedTensor_sin
+   tags: [core, pointwise]
+ 
+@@ -5397,8 +5400,8 @@
+   structured_delegate: sin.out
+   variants: function, method
+   dispatch:
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: sin_sparse_csr_
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: sin_sparse_
++    SparseCsrXPU: sin_sparse_csr_
++    SparseMPS, SparseXPU: sin_sparse_
+   tags: pointwise
+ 
+ - func: sin.out(Tensor self, *, Tensor(a!) out) -> Tensor(a!)
+@@ -5407,8 +5410,8 @@
+   structured_inherits: TensorIteratorBase
+   dispatch:
+     CPU, CUDA, MPS, MTIA, XPU: sin_out
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: sin_sparse_csr_out
+-    SparseCPU, SparseCUDA, SparseMPS, SparseXPU: sin_sparse_out
++    SparseCsrXPU: sin_sparse_csr_out
++    SparseMPS, SparseXPU: sin_sparse_out
+   tags: pointwise
+ 
+ - func: sinc(Tensor self) -> Tensor
+@@ -6758,16 +6761,12 @@
+ - func: _sparse_softmax(Tensor self, int dim, bool half_to_float) -> Tensor
+   python_module: sparse
+   dispatch:
+-    SparseCPU: softmax_sparse_cpu
+-    SparseCUDA: softmax_sparse_cuda
+     SparseMPS: softmax_sparse_mps
+     SparseXPU: softmax_sparse_xpu
+   autogen: _sparse_softmax.out
+ 
+ - func: _sparse_softmax_backward_data(Tensor grad_output, Tensor output, int dim, Tensor self) -> Tensor
+   dispatch:
+-    SparseCPU: softmax_backward_sparse_cpu
+-    SparseCUDA: softmax_backward_sparse_cuda
+     SparseMPS: softmax_backward_sparse_mps
+     SparseXPU: softmax_backward_sparse_xpu
+   autogen: _sparse_softmax_backward_data.out
+@@ -7597,9 +7596,9 @@
+ - func: _to_sparse_csr(Tensor self, int? dense_dim=None) -> Tensor
+   variants: method
+   dispatch:
+-    CPU, CUDA, XPU: dense_to_sparse_csr
+-    SparseCPU, SparseCUDA, SparseXPU: coo_to_sparse_csr
+-    SparseCsrCPU, SparseCsrCUDA, SparseCsrMeta, SparseCsrXPU: sparse_compressed_to_sparse_csr
++    XPU: dense_to_sparse_csr
++    SparseXPU: coo_to_sparse_csr
++    SparseCsrXPU: sparse_compressed_to_sparse_csr
+   autogen: _to_sparse_csr.out
+ 
+ - func: to_sparse_csc(Tensor self, int? dense_dim=None) -> Tensor
+diff --git a/aten/src/ATen/native/sparse/SparseMovedToPackage.cpp b/aten/src/ATen/native/sparse/SparseMovedToPackage.cpp
+new file mode 100644
+index 00000000000..9bd5b9a51bb
+--- /dev/null
++++ b/aten/src/ATen/native/sparse/SparseMovedToPackage.cpp
+@@ -0,0 +1,56 @@
++// Experiment: sparse kernels deleted from ATen are provided by the
++// sparsetorch package. Without it, a call on a sparse tensor raises one message:
++// - ops with no kernel for the key reach the backend fallback below;
++// - ops that also have a CompositeExplicitAutograd kernel (abs) would run that
++//   kernel on the sparse tensor instead, so their sparse lines point to a stub.
++#define TORCH_ASSERT_ONLY_METHOD_OPERATORS
++#include <ATen/core/Tensor.h>
++#include <ATen/core/dispatch/Dispatcher.h>
++#include <torch/library.h>
++
++#ifndef AT_PER_OPERATOR_HEADERS
++#include <ATen/NativeFunctions.h>
++#else
++#include <ATen/ops/abs_native.h>
++#endif
++
++namespace at::native {
++
++namespace {
++
++[[noreturn]] void sparse_kernels_moved(const std::string& op) {
++  TORCH_CHECK_NOT_IMPLEMENTED(
++      false, op, ": sparse kernels are provided by the sparsetorch package; install it");
++}
++
++void sparse_moved_fallback(const c10::OperatorHandle& op, torch::jit::Stack* /*stack*/) {
++  sparse_kernels_moved(c10::toString(op.operator_name()));
++}
++
++} // namespace
++
++Tensor abs_sparse_moved(const Tensor& /*self*/) {
++  sparse_kernels_moved("aten::abs");
++}
++
++Tensor& abs_sparse_moved_(Tensor& /*self*/) {
++  sparse_kernels_moved("aten::abs_");
++}
++
++Tensor& abs_sparse_moved_out(const Tensor& /*self*/, Tensor& /*out*/) {
++  sparse_kernels_moved("aten::abs.out");
++}
++
++#define SPARSE_MOVED_FALLBACK(KEY)                                                   \
++  TORCH_LIBRARY_IMPL(_, KEY, m) {                                                    \
++    m.fallback(torch::CppFunction::makeFromBoxedFunction<&sparse_moved_fallback>()); \
++  }
++
++SPARSE_MOVED_FALLBACK(SparseCPU)
++SPARSE_MOVED_FALLBACK(SparseCUDA)
++SPARSE_MOVED_FALLBACK(SparseCsrCPU)
++SPARSE_MOVED_FALLBACK(SparseCsrCUDA)
++SPARSE_MOVED_FALLBACK(SparseMeta)
++SPARSE_MOVED_FALLBACK(SparseCsrMeta)
++
++} // namespace at::native

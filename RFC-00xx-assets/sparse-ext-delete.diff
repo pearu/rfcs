@@ -1,0 +1,710 @@
+diff --git a/sparse-ext/csrc/families.cpp b/sparse-ext/csrc/families.cpp
+new file mode 100644
+index 0000000..3998637
+--- /dev/null
++++ b/sparse-ext/csrc/families.cpp
+@@ -0,0 +1,567 @@
++// The families whose sparse kernels were deleted from ATen
++// (sin, abs, log1p, _sparse_softmax, _to_sparse_csr), on the stable ABI only.
++//
++// Ports of:
++// - COO unary ops: coalesced_unary_ufunc{,_,_out} (sparse/SparseUnaryOps.cpp);
++// - compressed unary ops: unary_op_out, unary_op_inplace,
++//   get_result_tensor_for_unary_op (sparse/SparseCsrTensorMath.cpp);
++// - softmax_sparse_{cpu,cuda}, softmax_backward_sparse_{cpu,cuda}
++//   (sparse/SoftMax.cpp, sparse/cuda/SoftMax.cu) as one device-generic kernel
++//   made of dispatcher calls (pools by _unique2, scatter_reduce amax, scatter_add);
++// - dense_to_sparse_csr, coo_to_sparse_csr, sparse_compressed_to_sparse_csr
++//   (TensorConversions.cpp), also device-generic.
++//
++// Stable-ABI gaps met here:
++// - ops with a Scalar argument cannot be called, and aten::add/sub take
++//   `Scalar alpha`, so a - b is sum(stack([a, -b]), 0);
++// - a stable kernel's exception reaches Python as RuntimeError whatever its type
++//   (the shim keeps only the message), but aten::_sparse_softmax must raise
++//   IndexError for an out-of-range dim. Its kernel here is the package's op
++//   sparse_ext::sparse_softmax; register_softmax.cpp (C++ API, module _bridge)
++//   registers aten::_sparse_softmax, wraps dim and calls it.
++#include "sx.h"
++
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++namespace sx {
++namespace {
++
++// ---------------------------------------------------------------- counters
++
++enum Family { SIN, ABS, LOG1P, SOFTMAX, SOFTMAX_BACKWARD, TO_SPARSE_CSR, N_FAMILIES };
++const char* const family_names[N_FAMILIES] = {"sin", "abs", "log1p", "_sparse_softmax",
++                                              "_sparse_softmax_backward_data", "_to_sparse_csr"};
++// [family][device]: device 0 CPU, 1 CUDA, 2 Meta (or any other).
++std::atomic<int64_t> calls_[N_FAMILIES][3];
++
++void count(Family f, const Tensor& t) {
++  calls_[f][t.is_cpu() ? 0 : t.is_cuda() ? 1 : 2]++;
++}
++
++int64_t calls(std::string family, int64_t device, bool reset) {
++  STD_TORCH_CHECK(device >= 0 && device < 3, "sparse_ext::calls: device is 0 (CPU), 1 (CUDA) or 2 (Meta)");
++  for (int f = 0; f < N_FAMILIES; f++) {
++    if (family == family_names[f]) {
++      return reset ? calls_[f][device].exchange(0) : calls_[f][device].load();
++    }
++  }
++  STD_TORCH_CHECK(false, "sparse_ext::calls: unknown family ", family);
++}
++
++bool use_aten() {
++  const char* v = std::getenv("SPARSETORCH_USE_ATEN");
++  return v && std::strcmp(v, "1") == 0;
++}
++// Read at load, before the registrars below (same file).
++const bool use_aten_at_load = use_aten();
++
++// ---------------------------------------------------------------- helpers
++
++template <class R0, class R1, std::size_t N, class... Args>
++std::pair<R0, R1> call2(const char* op, const char* overload, const Args&... args) {
++  std::array<StableIValue, N> stack{detail::from(args)...};
++  dispatch(op, overload, stack);
++  return {detail::to<R0>(stack[0]), detail::to<R1>(stack[1])};
++}
++
++bool is_meta(const Tensor& t) { return !t.is_cpu() && !t.is_cuda(); }
++bool is_compressed(const Tensor& t) {
++  const auto l = t.layout();
++  return l == Layout::SparseCsr || l == Layout::SparseCsc || l == Layout::SparseBsr ||
++         l == Layout::SparseBsc;
++}
++bool is_row_compressed(const Tensor& t) {
++  return t.layout() == Layout::SparseCsr || t.layout() == Layout::SparseBsr;
++}
++const char* layout_name(Layout l) {
++  switch (l) {
++    case Layout::Strided: return "Strided";
++    case Layout::Sparse: return "Sparse";
++    case Layout::SparseCsr: return "SparseCsr";
++    case Layout::SparseCsc: return "SparseCsc";
++    case Layout::SparseBsr: return "SparseBsr";
++    case Layout::SparseBsc: return "SparseBsc";
++    default: return "unknown layout";
++  }
++}
++const char* dtype_name(ScalarType t) {
++  switch (t) {
++    case ScalarType::Byte: return "Byte";
++    case ScalarType::Char: return "Char";
++    case ScalarType::Short: return "Short";
++    case ScalarType::Int: return "Int";
++    case ScalarType::Long: return "Long";
++    case ScalarType::Half: return "Half";
++    case ScalarType::Float: return "Float";
++    case ScalarType::Double: return "Double";
++    case ScalarType::ComplexHalf: return "ComplexHalf";
++    case ScalarType::ComplexFloat: return "ComplexFloat";
++    case ScalarType::ComplexDouble: return "ComplexDouble";
++    case ScalarType::Bool: return "Bool";
++    case ScalarType::BFloat16: return "BFloat16";
++    default: return "this dtype";
++  }
++}
++
++Tensor op1(const char* op, const Tensor& t) { return call<Tensor>(op, "", t); }
++Tensor neg(const Tensor& t) { return op1("aten::neg", t); }
++Tensor exp(const Tensor& t) { return op1("aten::exp", t); }
++Tensor div(const Tensor& a, const Tensor& b) { return call<Tensor>("aten::div", "Tensor", a, b); }
++Tensor sum_dims(const Tensor& t, std::vector<int64_t> dims, std::optional<ScalarType> dtype = std::nullopt) {
++  return call<Tensor>("aten::sum", "dim_IntList", t, std::optional<std::vector<int64_t>>(dims), false, dtype);
++}
++// a - b: aten::sub takes `Scalar alpha`, which the stable ABI cannot pass.
++Tensor sub(const Tensor& a, const Tensor& b) {
++  return sum_dims(call<Tensor>("aten::stack", "", std::vector<Tensor>{a, neg(b)}, int64_t(0)), {0});
++}
++Tensor zeros(const std::vector<int64_t>& size, ScalarType dtype, const torch::stable::Device& dev) {
++  return call<Tensor>("aten::zeros", "", size, std::optional<ScalarType>(dtype), std::optional<Layout>(),
++                      std::optional<torch::stable::Device>(dev), std::optional<bool>());
++}
++Tensor zeros_like(const Tensor& t) {
++  return zeros(vec(t.sizes()), t.scalar_type(), t.device());
++}
++Tensor empty(const std::vector<int64_t>& size, ScalarType dtype, const torch::stable::Device& dev) {
++  return torch::stable::empty(size, dtype, std::nullopt, dev);
++}
++Tensor cat(const std::vector<Tensor>& ts, int64_t dim) { return call<Tensor>("aten::cat", "", ts, dim); }
++Tensor cumsum(const Tensor& t, int64_t dim) {
++  return call<Tensor>("aten::cumsum", "", t, dim, std::optional<ScalarType>());
++}
++Tensor rshape(const Tensor& t, const std::vector<int64_t>& s) { return torch::stable::reshape(t, s); }
++Tensor contig(const Tensor& t) {
++  return call<Tensor>("aten::contiguous", "", t, torch::headeronly::MemoryFormat::Contiguous);
++}
++// [0, 1, ..., n-1] (Long) on dev; built on CPU (aten::arange takes Scalars).
++Tensor arange(int64_t n, const torch::stable::Device& dev) {
++  Tensor a = torch::stable::empty({n}, ScalarType::Long);
++  auto* p = a.mutable_data_ptr<int64_t>();
++  for (int64_t i = 0; i < n; i++) p[i] = i;
++  return torch::stable::to(a, dev);
++}
++// A 1-element Long tensor holding v on dev.
++Tensor long_scalar(int64_t v, const torch::stable::Device& dev) {
++  Tensor a = torch::stable::empty({1}, ScalarType::Long);
++  *a.mutable_data_ptr<int64_t>() = v;
++  return torch::stable::to(a, dev);
++}
++int64_t prod(const std::vector<int64_t>& v, size_t from, size_t to) {
++  int64_t p = 1;
++  for (size_t i = from; i < to; i++) p *= v[i];
++  return p;
++}
++Tensor empty_sparse_like(const Tensor& t) {  // nnz 0, t's shape and dims (empty_like_sparse_coo)
++  const int64_t sdim = sparse_dim(t), ddim = dense_dim(t);
++  auto vshape = vec(values(t).sizes());
++  vshape[0] = 0;
++  return sparse_coo(sdim, ddim, vec(t.sizes()), empty({sdim, 0}, ScalarType::Long, t.device()),
++                    empty(vshape, t.scalar_type(), t.device()), true);
++}
++// Same storage (the out=self case); a tensor with no entries is never "same".
++bool same_coo(const Tensor& a, const Tensor& b) {
++  const Tensor av = values(a), bv = values(b);
++  return av.numel() > 0 && av.data_ptr() == bv.data_ptr() &&
++         indices(a).data_ptr() == indices(b).data_ptr() && vec(a.sizes()) == vec(b.sizes());
++}
++Tensor cvalues(const Tensor& t) { return op1("aten::values", t); }
++bool same_compressed(const Tensor& a, const Tensor& b) {
++  const Tensor av = cvalues(a), bv = cvalues(b);
++  return av.numel() > 0 && av.data_ptr() == bv.data_ptr() && vec(a.sizes()) == vec(b.sizes());
++}
++Tensor compressed_indices(const Tensor& t) {
++  return op1(is_row_compressed(t) ? "aten::crow_indices" : "aten::ccol_indices", t);
++}
++Tensor plain_indices(const Tensor& t) {
++  return op1(is_row_compressed(t) ? "aten::col_indices" : "aten::row_indices", t);
++}
++Tensor compressed_tensor(const Tensor& ci, const Tensor& pi, const Tensor& v, const std::vector<int64_t>& size,
++                         Layout layout) {
++  return call<Tensor>("aten::_sparse_compressed_tensor_unsafe", "", ci, pi, v, size,
++                      std::optional<ScalarType>(v.scalar_type()), std::optional<Layout>(layout),
++                      std::optional<torch::stable::Device>(v.device()), std::optional<bool>());
++}
++
++// ---------------------------------------------------------------- unary: sin, abs, log1p
++
++// op: "aten::sin" etc.; the out and in-place overloads are op + ".out", op + "_".
++struct Unary {
++  Family family;
++  const char* functional;  // aten::sin
++  const char* inplace;     // aten::sin_
++  const char* name;        // sin
++};
++
++// COO: coalesced_unary_ufunc.
++Tensor coo_unary(const Unary& u, const Tensor& self) {
++  const Tensor input = coalesce(self);
++  const Tensor v = call<Tensor>(u.functional, "", values(input));
++  return sparse_coo(sparse_dim(input), dense_dim(input), vec(input.sizes()), sx::clone(indices(input)), v, true);
++}
++// COO: the in-place variant (requires coalesced input, as in-tree).
++Tensor coo_unary_(const Unary& u, Tensor self) {
++  STD_TORCH_CHECK(is_coalesced(self), u.name, "_ requires coalesced input");
++  call<Tensor>(u.inplace, "", values(self));
++  return self;
++}
++// COO: coalesced_unary_ufunc_out.
++Tensor coo_unary_out(const Unary& u, const Tensor& self, Tensor out) {
++  if (same_coo(self, out)) {
++    STD_TORCH_CHECK(is_coalesced(self), "expected coalesced tensor for inplace operation");
++    const Tensor v = values(self);
++    call<Tensor>(u.functional, "out", v, v);
++    return out;
++  }
++  STD_TORCH_CHECK(is_sparse(self) && is_sparse(out), "");
++  const Tensor input = coalesce(self);
++  const Tensor iv = values(input);
++  const Tensor ov = empty(vec(iv.sizes()), out.scalar_type(), iv.device());
++  call<Tensor>(u.functional, "out", iv, ov);  // checks that the result casts to out's dtype
++  const Tensor tmp = sparse_coo(sparse_dim(input), dense_dim(input), vec(input.sizes()),
++                                sx::clone(indices(input)), ov, true);
++  zero_like_sparse(out, tmp);
++  assign_sparse(out, tmp);
++  return out;
++}
++// Compressed: get_result_tensor_for_unary_op.
++Tensor compressed_unary(const Unary& u, const Tensor& self) {
++  const Tensor v = call<Tensor>(u.functional, "", cvalues(self));
++  return compressed_tensor(sx::clone(compressed_indices(self)), sx::clone(plain_indices(self)), v, vec(self.sizes()),
++                           self.layout());
++}
++Tensor compressed_unary_(const Unary& u, Tensor self) {
++  call<Tensor>(u.inplace, "", cvalues(self));
++  return self;
++}
++// Compressed: unary_op_out.
++Tensor compressed_unary_out(const Unary& u, const Tensor& self, Tensor out) {
++  STD_TORCH_CHECK(is_compressed(self) && is_compressed(out), u.name, ": expected sparse compressed tensors");
++  if (!same_compressed(self, out)) {
++    if (out.numel() == 0) call<Tensor>("aten::resize_as_sparse_", "", out, self);
++    copy_(out, self);
++  }
++  call<Tensor>(u.functional, "out", cvalues(self), cvalues(out));
++  return out;
++}
++
++const Unary SIN_{SIN, "aten::sin", "aten::sin_", "sin"};
++const Unary ABS_{ABS, "aten::abs", "aten::abs_", "abs"};
++const Unary LOG1P_{LOG1P, "aten::log1p", "aten::log1p_", "log1p"};
++
++#define SX_UNARY_KERNELS(U, name)                                                                     \
++  Tensor name##_coo(Tensor self) { count(U.family, self); return coo_unary(U, self); }               \
++  Tensor name##_coo_(Tensor self) { count(U.family, self); return coo_unary_(U, self); }             \
++  Tensor name##_coo_out(Tensor self, Tensor out) { count(U.family, self); return coo_unary_out(U, self, out); } \
++  Tensor name##_compressed(Tensor self) { count(U.family, self); return compressed_unary(U, self); } \
++  Tensor name##_compressed_(Tensor self) { count(U.family, self); return compressed_unary_(U, self); } \
++  Tensor name##_compressed_out(Tensor self, Tensor out) {                                             \
++    count(U.family, self);                                                                            \
++    return compressed_unary_out(U, self, out);                                                        \
++  }
++
++SX_UNARY_KERNELS(SIN_, sin)
++SX_UNARY_KERNELS(ABS_, abs)
++SX_UNARY_KERNELS(LOG1P_, log1p)
++
++// ---------------------------------------------------------------- _sparse_softmax
++
++void check_softmax_dtype(ScalarType t, const char* name) {
++  STD_TORCH_CHECK(t == ScalarType::Float || t == ScalarType::Double, "\"", name, "\" not implemented for '",
++                  dtype_name(t), "'");
++}
++int64_t wrap_dim(int64_t dim, int64_t ndim) {
++  const int64_t n = ndim > 0 ? ndim : 1;
++  STD_TORCH_CHECK(dim >= -n && dim < n, "Dimension out of range (expected to be in range of [", -n, ", ",
++                  n - 1, "], but got ", dim, ")");
++  return dim < 0 ? dim + n : dim;
++}
++
++// Per entry of the coalesced `t`, the id of its pool along sparse dim `dim`
++// (entries sharing every sparse index but dim's), and the number of pools.
++std::pair<Tensor, int64_t> pools(const Tensor& t, int64_t dim) {
++  const int64_t sdim = sparse_dim(t);
++  const auto size = vec(t.sizes());
++  Tensor w = torch::stable::empty({sdim, 1}, ScalarType::Long);
++  auto* wp = w.mutable_data_ptr<int64_t>();
++  int64_t stride = 1;
++  for (int64_t k = sdim - 1; k >= 0; k--) {
++    wp[k] = k == dim ? 0 : stride;
++    if (k != dim) stride *= size[k];
++  }
++  const Tensor key = sum_dims(call<Tensor>("aten::mul", "Tensor", indices(t), torch::stable::to(w, t.device())), {0});
++  auto [uniq, inverse] = call2<Tensor, Tensor, 4>("aten::_unique2", "", key, true, true, false);
++  return {inverse, uniq.size(0)};
++}
++// pool ids, shaped (nnz, 1, ..., 1) and expanded to values' shape, for scatter.
++Tensor pool_index(const Tensor& inverse, const Tensor& vals) {
++  std::vector<int64_t> s(vals.dim(), 1);
++  s[0] = inverse.size(0);
++  return expand(rshape(inverse, s), vec(vals.sizes()));
++}
++Tensor pooled(const Tensor& vals, int64_t npools) {
++  auto s = vec(vals.sizes());
++  s[0] = npools;
++  return zeros(s, vals.scalar_type(), vals.device());
++}
++
++Tensor sparse_softmax(Tensor self, int64_t dim_, bool half_to_float) {
++  count(SOFTMAX, self);
++  STD_TORCH_CHECK(is_sparse(self), "_sparse_softmax: expected a sparse COO tensor");
++  STD_TORCH_CHECK(!half_to_float, "softmax: with half to float conversion is not supported on ",
++                  self.is_cuda() ? "cuda" : self.is_cpu() ? "cpu" : "meta");
++  const Tensor input = coalesce(self);
++  const int64_t dim = wrap_dim(dim_, input.dim());
++  if (input.numel() == 0) return empty_sparse_like(input);
++  check_softmax_dtype(input.scalar_type(), "softmax");
++  const int64_t sdim = sparse_dim(input), ddim = dense_dim(input);
++  const Tensor v = values(input);
++  Tensor out;
++  if (dim >= sdim) {
++    out = call<Tensor>("aten::_softmax", "", v, dim - sdim + 1, false);
++  } else if (v.size(0) == 0) {
++    out = sx::clone(v);
++  } else {
++    auto [inverse, npools] = pools(input, dim);
++    const Tensor idx = pool_index(inverse, v);
++    const Tensor mx = call<Tensor>("aten::scatter_reduce", "two", pooled(v, npools), int64_t(0), idx, v,
++                                   std::string("amax"), false);
++    const Tensor e = exp(sub(v, torch::stable::index_select(mx, 0, inverse)));
++    const Tensor s = call<Tensor>("aten::scatter_add", "", pooled(v, npools), int64_t(0), idx, e);
++    out = div(e, torch::stable::index_select(s, 0, inverse));
++  }
++  return sparse_coo(sdim, ddim, vec(input.sizes()), sx::clone(indices(input)), out, true);
++}
++
++Tensor sparse_softmax_backward(Tensor grad_, Tensor output_, int64_t dim_, Tensor input_) {
++  count(SOFTMAX_BACKWARD, output_);
++  STD_TORCH_CHECK(vec(grad_.sizes()) == vec(output_.sizes()), "softmax_backward: grad and output sizes differ");
++  const int64_t dim = wrap_dim(dim_, grad_.dim());
++  const Tensor grad = coalesce(grad_), output = coalesce(output_);
++  STD_TORCH_CHECK(sparse_dim(grad) == sparse_dim(output), ": grad and output sparse dimensions must be equal");
++  if (output.numel() == 0) return empty_sparse_like(output);
++  check_softmax_dtype(grad.scalar_type(), "softmax_backward");
++  const int64_t sdim = sparse_dim(output), ddim = dense_dim(output);
++  const Tensor ov = values(output);
++  // grad at output's entries (0 where grad has none), in output's order.
++  const Tensor g = values(sparse_mask(grad, output));
++  Tensor gi;
++  if (dim >= sdim) {
++    gi = call<Tensor>("aten::_softmax_backward_data", "", g, ov, dim - sdim + 1, input_.scalar_type());
++  } else if (ov.size(0) == 0) {
++    gi = sx::clone(ov);
++  } else {
++    // gI_i = out_i * (g_i - sum_{j in pool(i)} out_j * g_j)
++    auto [inverse, npools] = pools(output, dim);
++    const Tensor og = mul(ov, g);
++    const Tensor t = call<Tensor>("aten::scatter_add", "", pooled(ov, npools), int64_t(0),
++                                  pool_index(inverse, ov), og);
++    gi = mul(ov, sub(g, torch::stable::index_select(t, 0, inverse)));
++  }
++  return sparse_coo(sdim, ddim, vec(output.sizes()), sx::clone(indices(output)), gi, true);
++}
++
++// ---------------------------------------------------------------- _to_sparse_csr
++
++// Index tensors for a compressed result with (b, m) row counts: crow (b, m+1).
++Tensor crow_from_counts(const Tensor& counts /* (b, m) Long */) {
++  const Tensor z = zeros({counts.size(0), 1}, ScalarType::Long, counts.device());
++  return cat({z, cumsum(counts, 1)}, 1);
++}
++// (b, k) -> (*batch, k), or (k) without batch dims.
++Tensor unbatch(const Tensor& t, const std::vector<int64_t>& batch) {
++  std::vector<int64_t> s(batch);
++  auto rest = vec(t.sizes());
++  s.insert(s.end(), rest.begin() + 1, rest.end());
++  return rshape(t, s);
++}
++
++// dense_to_sparse_csr (dense_to_sparse_compressed<SparseCsr>).
++Tensor dense_to_csr(const Tensor& self, std::optional<int64_t> dense_dim_opt) {
++  if (dense_dim_opt) {
++    const int64_t dd = *dense_dim_opt;
++    STD_TORCH_CHECK(dd >= 0 && dd <= self.dim() - 2, "dense_to_sparse_csr: dense_dim argument must be in [0,",
++                    self.dim() - 2, "] range, but ", dd, " is given");
++  }
++  const int64_t ddim = dense_dim_opt.value_or(0);
++  STD_TORCH_CHECK(self.dim() - ddim >= 2, "dense_to_sparse_csr: expected at least 2 sparse dims, got a ",
++                  self.dim(), "-D tensor with dense_dim ", ddim);
++  const auto size = vec(self.sizes());
++  const int64_t nbatch = self.dim() - 2 - ddim;
++  const std::vector<int64_t> batch(size.begin(), size.begin() + nbatch);
++  const int64_t b = prod(size, 0, nbatch), m = size[nbatch], n = size[nbatch + 1];
++  STD_TORCH_CHECK(nbatch == 0 || b > 0, "to_sparse_csr: Expected product of batch dimensions to be non-zero.");
++  Tensor zero = torch::stable::empty({}, self.scalar_type(), std::nullopt, self.device());
++  zero_(zero);
++  Tensor mask = call<Tensor>("aten::ne", "Tensor", self, zero);
++  if (ddim > 0) {
++    std::vector<int64_t> d(ddim);
++    for (int64_t i = 0; i < ddim; i++) d[i] = nbatch + 2 + i;
++    mask = call<Tensor>("aten::any", "dims", mask, std::optional<std::vector<int64_t>>(d), false);
++  }
++  mask = rshape(mask, {b, m, n});
++  const Tensor counts = sum_dims(mask, {2}, ScalarType::Long);  // (b, m)
++  const Tensor per_batch = sum_dims(counts, {1});                // (b,)
++  int64_t nse = 0;
++  if (b > 0) {
++    const Tensor pb = torch::stable::to(per_batch, torch::stable::Device(torch::headeronly::DeviceType::CPU));
++    const int64_t* p = pb.const_data_ptr<int64_t>();
++    nse = p[0];
++    if (nbatch > 0) {
++      for (int64_t i = 1; i < b; i++)
++        STD_TORCH_CHECK(p[i] == nse, "Expect the same number of specified elements per batch.");
++    }
++  }
++  const Tensor nz = call<Tensor>("aten::nonzero", "", mask);  // (b * nse, 3): batch, row, col
++  const Tensor col = rshape(torch::stable::select(nz, 1, 2), {b, nse});
++  std::vector<int64_t> vshape{b, m, n};
++  vshape.insert(vshape.end(), size.begin() + nbatch + 2, size.end());
++  const Tensor vals_all = index(rshape(self, vshape), {std::optional<Tensor>(mask)});  // (b * nse, *dense)
++  std::vector<int64_t> vs{b, nse};
++  vs.insert(vs.end(), size.begin() + nbatch + 2, size.end());
++  const Tensor vals = rshape(vals_all, vs);
++  return compressed_tensor(unbatch(crow_from_counts(counts), batch), unbatch(col, batch),
++                           unbatch(vals, batch), size, Layout::SparseCsr);
++}
++
++// coo_to_sparse_csr.
++Tensor coo_to_csr(const Tensor& self) {
++  STD_TORCH_CHECK(sparse_dim(self) == 2, "coo_to_sparse_csr: conversion from Sparse to SparseCsr for input "
++                  "tensors with sparse_dim()!=2 is not supported");
++  const Tensor c = coalesce(self);
++  const Tensor idx = indices(c);
++  const Tensor row = torch::stable::select(idx, 0, 0);
++  const bool out_int32 = row.scalar_type() == ScalarType::Int;
++  const Tensor crow = call<Tensor>("aten::_convert_indices_from_coo_to_csr", "", row, self.size(0), out_int32);
++  return compressed_tensor(crow, contig(torch::stable::select(idx, 0, 1)), values(c), vec(c.sizes()),
++                           Layout::SparseCsr);
++}
++
++// sparse_compressed_to_sparse_csr: CSC -> CSR (sparse_compressed_to_flipped).
++Tensor csc_to_csr(const Tensor& self) {
++  STD_TORCH_CHECK(self.layout() == Layout::SparseCsc,
++                  "sparse_compressed_to_sparse_csr: expected SparseCsr or SparseCsc layout but got ",
++                  layout_name(self.layout()));
++  const Tensor ccol = op1("aten::ccol_indices", self), row = op1("aten::row_indices", self);
++  const Tensor v = cvalues(self);
++  const auto size = vec(self.sizes());
++  const int64_t nbatch = ccol.dim() - 1;
++  const std::vector<int64_t> batch(size.begin(), size.begin() + nbatch);
++  const int64_t b = prod(size, 0, nbatch), m = size[nbatch], n = size[nbatch + 1];
++  const int64_t nse = row.size(-1);
++  const ScalarType itype = ccol.scalar_type();
++  std::vector<int64_t> vs{b * nse};
++  const auto vsize = vec(v.sizes());
++  vs.insert(vs.end(), vsize.begin() + nbatch + 1, vsize.end());
++  if (is_meta(self)) {  // shapes only: nse is unchanged
++    std::vector<int64_t> crow_s(batch), col_s(batch);
++    crow_s.push_back(m + 1);
++    col_s.push_back(nse);
++    return compressed_tensor(empty(crow_s, itype, self.device()), empty(col_s, itype, self.device()),
++                             torch::stable::empty_like(v), size, Layout::SparseCsr);
++  }
++  const auto dev = self.device();
++  const Tensor ccol2 = to_dtype(rshape(ccol, {b, n + 1}), ScalarType::Long);
++  const Tensor row2 = rshape(to_dtype(row, ScalarType::Long), {b * nse});
++  // column of each entry: column j repeated ccol[j+1] - ccol[j] times, per batch
++  const Tensor per_col = rshape(call<Tensor>("aten::diff", "", ccol2, int64_t(1), int64_t(1),
++                                              std::optional<Tensor>(), std::optional<Tensor>()), {b * n});
++  const Tensor cols = expand(rshape(arange(n, dev), {1, n}), {b, n});
++  const Tensor col_of = call<Tensor>("aten::repeat_interleave", "self_Tensor", rshape(contig(cols), {b * n}),
++                                     per_col, std::optional<int64_t>(), std::optional<int64_t>(b * nse));
++  const Tensor batch_of = call<Tensor>("aten::repeat_interleave", "self_Tensor", arange(b, dev),
++                                       expand(long_scalar(nse, dev), {b}), std::optional<int64_t>(),
++                                       std::optional<int64_t>(b * nse));
++  // key = (batch * m + row) * n + col, sorted: CSR order within each batch
++  Tensor m_t = long_scalar(m, dev), n_t = long_scalar(n, dev);
++  const Tensor brow = sum_dims(call<Tensor>("aten::stack", "",
++                                            std::vector<Tensor>{mul(batch_of, m_t), row2}, int64_t(0)), {0});
++  const Tensor key = sum_dims(call<Tensor>("aten::stack", "",
++                                           std::vector<Tensor>{mul(brow, n_t), col_of}, int64_t(0)), {0});
++  auto [sorted, perm] = call2<Tensor, Tensor, 4>("aten::sort", "stable", key, std::optional<bool>(true),
++                                                 int64_t(-1), false);
++  (void)sorted;
++  const Tensor counts = rshape(call<Tensor>("aten::bincount", "", brow, std::optional<Tensor>(), b * m), {b, m});
++  const Tensor crow = to_dtype(crow_from_counts(counts), itype);
++  const Tensor col = to_dtype(rshape(torch::stable::index_select(col_of, 0, perm), {b, nse}), itype);
++  Tensor vals = torch::stable::index_select(rshape(v, vs), 0, perm);
++  std::vector<int64_t> vs2{b, nse};
++  vs2.insert(vs2.end(), vs.begin() + 1, vs.end());
++  vals = rshape(vals, vs2);
++  return compressed_tensor(unbatch(crow, batch), unbatch(col, batch), unbatch(vals, batch), size,
++                           Layout::SparseCsr);
++}
++
++Tensor to_sparse_csr(Tensor self, std::optional<int64_t> dense_dim_opt) {
++  count(TO_SPARSE_CSR, self);
++  const Layout l = self.layout();
++  if (l == Layout::Strided) return dense_to_csr(self, dense_dim_opt);
++  STD_TORCH_CHECK(!dense_dim_opt, "_to_sparse_csr: conversion from ", layout_name(l),
++                  " to SparseCsr with dense_dim argument given is not supported");
++  if (l == Layout::Sparse) return coo_to_csr(self);
++  STD_TORCH_CHECK(l != Layout::SparseCsr,
++                  "sparse_compressed_to_sparse_csr: unexpected same input and output layout");
++  return csc_to_csr(self);
++}
++
++}  // namespace
++}  // namespace sx
++
++STABLE_TORCH_LIBRARY_FRAGMENT(sparse_ext, m) {
++  m.def("calls(str family, int device, bool reset=False) -> int");
++  m.def("sparse_softmax(Tensor self, int dim, bool half_to_float) -> Tensor");
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, SparseCPU, m) {
++  m.impl("sparse_softmax", TORCH_BOX(&sx::sparse_softmax));
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, SparseCUDA, m) {
++  m.impl("sparse_softmax", TORCH_BOX(&sx::sparse_softmax));
++}
++
++STABLE_TORCH_LIBRARY_IMPL(sparse_ext, CompositeExplicitAutograd, m) {
++  m.impl("calls", TORCH_BOX(&sx::calls));
++}
++
++#define SX_REGISTER_UNARY(name)                                    \
++  m.impl(#name, TORCH_BOX(&sx::name##_coo));                       \
++  m.impl(#name "_", TORCH_BOX(&sx::name##_coo_));                  \
++  m.impl(#name ".out", TORCH_BOX(&sx::name##_coo_out));
++#define SX_REGISTER_UNARY_COMPRESSED(name)                         \
++  m.impl(#name, TORCH_BOX(&sx::name##_compressed));                \
++  m.impl(#name "_", TORCH_BOX(&sx::name##_compressed_));           \
++  m.impl(#name ".out", TORCH_BOX(&sx::name##_compressed_out));
++
++#define SX_REGISTER_COO(KEY)                                                        \
++  STABLE_TORCH_LIBRARY_IMPL(aten, KEY, m) {                                         \
++    if (sx::use_aten_at_load) return;                                               \
++    SX_REGISTER_UNARY(sin)                                                          \
++    SX_REGISTER_UNARY(abs)                                                          \
++    SX_REGISTER_UNARY(log1p)                                                        \
++    m.impl("_sparse_softmax_backward_data", TORCH_BOX(&sx::sparse_softmax_backward)); \
++    m.impl("_to_sparse_csr", TORCH_BOX(&sx::to_sparse_csr));                        \
++  }
++#define SX_REGISTER_COMPRESSED(KEY)                                                 \
++  STABLE_TORCH_LIBRARY_IMPL(aten, KEY, m) {                                         \
++    if (sx::use_aten_at_load) return;                                               \
++    SX_REGISTER_UNARY_COMPRESSED(sin)                                               \
++    SX_REGISTER_UNARY_COMPRESSED(abs)                                               \
++    SX_REGISTER_UNARY_COMPRESSED(log1p)                                             \
++    m.impl("_to_sparse_csr", TORCH_BOX(&sx::to_sparse_csr));                        \
++  }
++// _to_sparse_csr is registered under dense keys in ATen (dense_to_sparse_csr).
++#define SX_REGISTER_DENSE(KEY)                                                      \
++  STABLE_TORCH_LIBRARY_IMPL(aten, KEY, m) {                                         \
++    if (sx::use_aten_at_load) return;                                               \
++    m.impl("_to_sparse_csr", TORCH_BOX(&sx::to_sparse_csr));                        \
++  }
++
++SX_REGISTER_COO(SparseCPU)
++SX_REGISTER_COO(SparseCUDA)
++SX_REGISTER_COMPRESSED(SparseCsrCPU)
++SX_REGISTER_COMPRESSED(SparseCsrCUDA)
++SX_REGISTER_COMPRESSED(SparseCsrMeta)
++SX_REGISTER_DENSE(CPU)
++SX_REGISTER_DENSE(CUDA)
+diff --git a/sparse-ext/csrc/register_softmax.cpp b/sparse-ext/csrc/register_softmax.cpp
+new file mode 100644
+index 0000000..1c74179
+--- /dev/null
++++ b/sparse-ext/csrc/register_softmax.cpp
+@@ -0,0 +1,42 @@
++// aten::_sparse_softmax for SparseCPU and SparseCUDA: the one registration not on
++// the stable ABI (module _bridge, tied to the torch it was built against).
++//
++// Missing piece: a stable kernel cannot raise IndexError. The shim catches its
++// exception and keeps only the message, so Python sees RuntimeError; test_softmax
++// expects IndexError("Dimension out of range") for an out-of-range dim. This
++// kernel wraps dim with c10::maybe_wrap_dim (which raises c10::IndexError) and
++// calls the package's stable kernel, sparse_ext::sparse_softmax.
++#include <ATen/core/Tensor.h>
++#include <ATen/core/dispatch/Dispatcher.h>
++#include <c10/core/WrapDimMinimal.h>
++#include <torch/library.h>
++
++#include <cstdlib>
++#include <cstring>
++
++namespace {
++
++bool use_aten() {
++  const char* v = std::getenv("SPARSETORCH_USE_ATEN");
++  return v && std::strcmp(v, "1") == 0;
++}
++const bool use_aten_at_load = use_aten();
++
++at::Tensor sparse_softmax(const at::Tensor& self, int64_t dim, bool half_to_float) {
++  static const auto op = c10::Dispatcher::singleton()
++                             .findSchemaOrThrow("sparse_ext::sparse_softmax", "")
++                             .typed<at::Tensor(const at::Tensor&, int64_t, bool)>();
++  return op.call(self, c10::maybe_wrap_dim(dim, self.dim()), half_to_float);
++}
++
++}  // namespace
++
++TORCH_LIBRARY_IMPL(aten, SparseCPU, m) {
++  if (use_aten_at_load) return;
++  m.impl("_sparse_softmax", TORCH_FN(sparse_softmax));
++}
++
++TORCH_LIBRARY_IMPL(aten, SparseCUDA, m) {
++  if (use_aten_at_load) return;
++  m.impl("_sparse_softmax", TORCH_FN(sparse_softmax));
++}
+diff --git a/sparse-ext/setup.py b/sparse-ext/setup.py
+index 9700647..3ad40b0 100644
+--- a/sparse-ext/setup.py
++++ b/sparse-ext/setup.py
+@@ -1,6 +1,8 @@
+-# sparse-ext: the COO mul family (aten::mul.out for SparseCPU and SparseCUDA),
+-# registered over ATen's kernels from outside the pytorch tree.
+-# SPARSETORCH_USE_ATEN=1 at load time skips that registration.
++# sparse-ext: sparse kernels registered into aten from outside the pytorch tree.
++# - mul.out for SparseCPU/SparseCUDA, over ATen's kernels;
++# - sin, abs, log1p, _sparse_softmax(_backward_data), _to_sparse_csr, whose ATen
++#   kernels are deleted by pytorch-delete.diff.
++# SPARSETORCH_USE_ATEN=1 at load time skips the aten registrations.
+ #
+ #   pip install --no-build-isolation -v sparse-ext
+ import os
+@@ -21,14 +23,18 @@ CSRC = ROOT / "csrc"
+ # addmm_cuda.cu's Stream::nativeHandle, not in this package).
+ TARGET = "-DTORCH_TARGET_VERSION=0x020a000000000000"
+ 
+-# mul.cpp has no device code: the CUDA kernel is composed of dispatcher calls,
+-# so one C++ module serves both keys.
++# No device code: the CUDA kernels are composed of dispatcher calls, so one C++
++# module serves every key.
++# _C: stable ABI only. _bridge: register_softmax.cpp, on the C++ API (a stable
++# kernel cannot raise IndexError); tied to the torch it was built against.
+ setup(
+     name="torch-sparse-ext",
+-    version="0.0.2",
++    version="0.0.3",
+     packages=["torch_sparse_ext"],
+-    ext_modules=[CppExtension("torch_sparse_ext._C", sources=[str(CSRC / "mul.cpp")],
+-                              extra_compile_args={"cxx": ["-O3", TARGET]}, py_limited_api=True)],
++    ext_modules=[CppExtension("torch_sparse_ext._C", sources=[str(CSRC / "mul.cpp"), str(CSRC / "families.cpp")],
++                              extra_compile_args={"cxx": ["-O3", TARGET]}, py_limited_api=True),
++                 CppExtension("torch_sparse_ext._bridge", sources=[str(CSRC / "register_softmax.cpp")],
++                              extra_compile_args={"cxx": ["-O3"]}, py_limited_api=True)],
+     cmdclass={"build_ext": BuildExtension},
+     options={"bdist_wheel": {"py_limited_api": "cp39"}},
+     entry_points={"torch.backends": ["sparse_ext = torch_sparse_ext:_autoload"]},
+diff --git a/sparse-ext/torch_sparse_ext/__init__.py b/sparse-ext/torch_sparse_ext/__init__.py
+index 60367bf..5adb0d3 100644
+--- a/sparse-ext/torch_sparse_ext/__init__.py
++++ b/sparse-ext/torch_sparse_ext/__init__.py
+@@ -1,5 +1,6 @@
+-"""The COO mul family (aten::mul.out for SparseCPU and SparseCUDA) from outside the
+-pytorch tree, registered over ATen's kernels. Loaded by ``import torch``
++"""Sparse kernels for aten from outside the pytorch tree: mul.out over ATen's kernels;
++sin, abs, log1p, _sparse_softmax(_backward_data) and _to_sparse_csr,
++whose ATen kernels are deleted by pytorch-delete.diff. Loaded by ``import torch``
+ through the ``torch.backends`` entry point; with TORCH_DEVICE_BACKEND_AUTOLOAD=0,
+ ``import torch_sparse_ext`` loads it.
+ 
+@@ -7,6 +8,8 @@ SPARSETORCH_USE_ATEN=1 when the package loads: the package skips its aten
+ registrations and ATen's kernels serve. The package's own ops stay defined:
+ - torch.ops.sparse_ext.mul_calls(device, reset=False): calls of the package's
+   kernel, device 0 CPU, 1 CUDA;
++- torch.ops.sparse_ext.calls(family, device, reset=False): the same for the deleted
++  families, device 0 CPU, 1 CUDA, 2 Meta;
+ - torch.ops.sparse_ext.uses_aten(): whether the switch was on at load;
+ - torch.ops.sparse_ext.mul_out(self, other, *, out): the same kernel by its own name.
+ """
+@@ -16,6 +19,8 @@ import torch
+ 
+ _dir = Path(__file__).parent
+ torch.ops.load_library(str(next(_dir.glob("_C*.so"))))
++# aten::_sparse_softmax, on the C++ API: see csrc/register_softmax.cpp.
++torch.ops.load_library(str(next(_dir.glob("_bridge*.so"))))
+ 
+ 
+ def mul_calls(reset=False):
+@@ -24,6 +29,17 @@ def mul_calls(reset=False):
+             "cuda": torch.ops.sparse_ext.mul_calls(1, reset)}
+ 
+ 
++FAMILIES = ("sin", "abs", "log1p", "_sparse_softmax", "_sparse_softmax_backward_data", "_to_sparse_csr")
++
++
++def calls(reset=False):
++    """{family: {'cpu': n, 'cuda': n, 'meta': n}} for mul and the deleted families."""
++    out = {"mul": dict(mul_calls(reset), meta=0)}
++    for f in FAMILIES:
++        out[f] = {d: torch.ops.sparse_ext.calls(f, i, reset) for i, d in enumerate(("cpu", "cuda", "meta"))}
++    return out
++
++
+ def uses_aten():
+     return torch.ops.sparse_ext.uses_aten()
+ 

@@ -1,9 +1,11 @@
 # Assets of RFC-00xx: experiments moving sparse kernel families out of core
 
-Two experiments. First: COO `mul` and `addmm`, CPU and CUDA, removed from ATen and
+Three experiments. First: COO `mul` and `addmm`, CPU and CUDA, removed from ATen and
 registered from a package built on the stable ABI, which `import torch` loads through a
 `torch.backends` entry point. Second: the `mul` family registered over ATen's kernels,
-which stay. Measured on two families only; MPS and XPU not tried.
+which stay. Third: five families (`sin`, `abs`, `log1p`, `_sparse_softmax`,
+`_to_sparse_csr`) deleted from ATen for CPU and CUDA and registered from the package.
+MPS and XPU not tried.
 
 | File | What it is | Applies to |
 |---|---|---|
@@ -11,6 +13,11 @@ which stay. Measured on two families only; MPS and XPU not tried.
 | `sparse-ext.diff` | The package, `sparse-ext/` (1028 lines): stable-ABI kernels for `mul.out` and `addmm`, `TORCH_TARGET_VERSION` 2.13, and two routes to register `addmm`: Python (`torch.library`, stable only) and a C++ bridge (`register_addmm.cpp`, the one non-stable file). `TORCH_SPARSE_EXT_ADDMM=python` or `cpp` (default) picks the route. | a new directory; builds against the patched pytorch |
 | `sparse-ext.diff`: `csrc/probe_scalar.cpp` | A stable-ABI kernel with a `Scalar` argument. Calling `torch.ops.sparse_ext_probe.scalar_arg(torch.ones(1), 2.0)` raises `RuntimeError: Not yet supported conversion from IValue to StableIValue for schema type: Scalar`. | — |
 | `sparse-ext-override.diff` | A third experiment: the COO `mul` family registered over ATen's kernels, which stay (`addmm` is dropped from the package). `SPARSETORCH_USE_ATEN=1` at load time skips the registration. `test_sparse.py -k mul`: 196 tests, OK, 16 skipped, the same with the package, with `SPARSETORCH_USE_ATEN=1`, and without the package. | on top of `sparse-ext.diff`; pytorch unchanged at `a67a74d3e7` |
+| `pytorch-delete.diff` | Third experiment. Deletes the CPU/CUDA sparse entries of five families, adds the stub and fallback file (`SparseMovedToPackage.cpp`). The RFC does not adopt the backend fallback: the experiment showed it misses composite and dense-key kernels, which is why stubs are needed. | pytorch `a67a74d3e71bf2891b0d02b126fe7390090e1f1c` plus the override experiment's yaml, which equals it (the second experiment leaves pytorch unchanged) |
+| `sparse-ext-delete.diff` | The package's kernels for the five families, on the stable ABI, plus a C++ bridge for `_sparse_softmax` (`register_softmax.cpp`: a stable kernel cannot raise `IndexError`). With the package, 2,171 targeted tests (`test_sparse.py`, `test_sparse_csr.py`, `-k "sin or abs or log1p or softmax or to_sparse_csr"`) give the same result as main, per test. | on top of `sparse-ext-override.diff`; builds against the pytorch above |
+| `probe-no-package.py` | One call per family and variant, COO and CSR, CPU and CUDA: the value, or the exception and its first line. | the pytorch above, with or without the package |
+| `probe-compressed.py` | Functional and in-place `sin`/`log1p` on CSR, CSC, BSR and BSC, without the package. | the pytorch above |
+| `probe-gradcheck-fake.py` | `gradcheck` of `log1p` and `sparse.softmax` on COO through core's formulas, and `FakeTensorMode` calls, with the package's call counters. | the pytorch above, with the package |
 | `correctness.py` | 1414 checks of `mul` and `addmm` against dense references, CPU and CUDA | either torch |
 | `bench.py` | the timings below; prints JSON | either torch |
 
@@ -26,6 +33,13 @@ python correctness.py
 python bench.py out-of-tree > bench-out-of-tree.json   # and with an unpatched torch
 TORCH_SPARSE_EXT_ADDMM=python python bench.py python > bench-python.json
 git apply sparse-ext-override.diff  # second experiment: on top of sparse-ext/, pytorch unpatched at a67a74d3e7; run test_sparse.py -k mul with and without SPARSETORCH_USE_ATEN=1
+git -C pytorch apply pytorch-delete.diff            # third experiment, on a67a74d3e7; then build pytorch from source
+git apply sparse-ext-delete.diff                    # on top of sparse-ext-override.diff
+pip install --no-build-isolation -v sparse-ext
+(cd pytorch && python -m pytest test/test_sparse.py test/test_sparse_csr.py -k "sin or abs or log1p or softmax or to_sparse_csr")
+python probe-gradcheck-fake.py
+TORCH_DEVICE_BACKEND_AUTOLOAD=0 python probe-no-package.py   # the package not loaded
+TORCH_DEVICE_BACKEND_AUTOLOAD=0 python probe-compressed.py
 ```
 
 ## Tests
