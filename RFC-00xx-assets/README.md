@@ -1,11 +1,12 @@
 # Assets of RFC-00xx: experiments moving sparse kernel families out of core
 
-Three experiments. Out of tree: COO `mul` and `addmm`, CPU and CUDA, removed from ATen
+Four experiments. Out of tree: COO `mul` and `addmm`, CPU and CUDA, removed from ATen
 and registered from a package built on the stable ABI, which `import torch` loads
 through a `torch.backends` entry point. Override: the `mul` family registered over
 ATen's kernels, which stay. Deletion: five families (`sin`, `abs`, `log1p`,
 `_sparse_softmax`, `_to_sparse_csr`) deleted from ATen for CPU and CUDA and registered
-from the package. MPS and XPU not tried.
+from the package. Compiler stack: `torch.export` and AOTInductor over moved families,
+and `_to_sparse` made a stub. MPS and XPU not tried.
 
 | File | What it is | Applies to |
 |---|---|---|
@@ -18,6 +19,12 @@ from the package. MPS and XPU not tried.
 | `probe-no-package.py` | One call per family and variant, COO and CSR, CPU and CUDA: the value, or the exception and the start of its message. | the pytorch above, with or without the package |
 | `probe-compressed.py` | Functional and in-place `sin`/`log1p` on CSR, CSC, BSR and BSC, without the package. | the pytorch above |
 | `probe-gradcheck-fake.py` | `gradcheck` of `log1p` and `sparse.softmax` on COO through core's formulas, and `FakeTensorMode` calls, with the package's call counters. | the pytorch above, with the package |
+| `pytorch-aoti.diff` | The compiler-stack experiment. `_to_sparse`'s sparse CPU/CUDA entries deleted and its dense CPU/CUDA kernel made a stub (torchgen refuses to delete it outright, since AOTInductor's C shims call it by name); `torchgen/gen_aoti_c_shim.py` generates the shims of moved ops as dispatcher calls, headers unchanged. | on top of `pytorch-delete.diff` |
+| `sparse-ext-aoti.diff` | The package's `_to_sparse` for CPU, CUDA and the sparse keys (`to_sparse.cpp`, ATen's kernels copied on the C++ API, in the bridge module), with a call counter. | on top of `sparse-ext-delete.diff`; builds against the pytorch above |
+| `export-save.py` | `torch.export` of `abs` on COO and of `to_sparse_csr`, saved with inputs and outputs. | main |
+| `export-load.py` | Loads and runs the saved programs, and compares with main's outputs. | the deletion experiment's pytorch, with or without the package |
+| `aoti-compile.py` | AOTInductor-compiles `forward = x.to_sparse()`, for CPU and CUDA. | main, or the compiler-stack pytorch with the package |
+| `aoti-run.py` | Loads and runs the compiled packages, with the package's call counters. | the compiler-stack pytorch, with or without the package |
 | `correctness.py` | 1414 checks of `mul` and `addmm` against dense references, CPU and CUDA | either torch |
 | `bench.py` | the timings below; prints JSON | either torch |
 
@@ -40,6 +47,14 @@ pip install --no-build-isolation -v sparse-ext
 python probe-gradcheck-fake.py
 TORCH_DEVICE_BACKEND_AUTOLOAD=0 python probe-no-package.py   # the package not loaded
 TORCH_DEVICE_BACKEND_AUTOLOAD=0 python probe-compressed.py
+python export-save.py OUT                           # on main
+python export-load.py OUT                           # on the deletion experiment's build, with and without the package
+git -C pytorch apply pytorch-aoti.diff              # compiler-stack experiment, on top of pytorch-delete.diff; then build pytorch from source
+git apply sparse-ext-aoti.diff                      # on top of sparse-ext-delete.diff
+pip install --no-build-isolation -v sparse-ext
+python aoti-compile.py OUT main                     # on main
+python aoti-compile.py OUT modified                 # on the compiler-stack build, with the package
+python aoti-run.py OUT                              # on the compiler-stack build, with and without the package
 ```
 
 ## Tests

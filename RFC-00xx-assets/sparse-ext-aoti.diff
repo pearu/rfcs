@@ -1,0 +1,432 @@
+diff --git a/sparse-ext/csrc/to_sparse.cpp b/sparse-ext/csrc/to_sparse.cpp
+new file mode 100644
+index 0000000..abc56c4
+--- /dev/null
++++ b/sparse-ext/csrc/to_sparse.cpp
+@@ -0,0 +1,356 @@
++// aten::_to_sparse (the layout overload) for CPU, CUDA, SparseCPU, SparseCUDA,
++// SparseCsrCPU, SparseCsrCUDA and SparseCsrMeta. With pytorch-aoti.diff applied,
++// ATen's sparse kernels of _to_sparse are deleted and its dense CPU/CUDA
++// kernel is a stub that raises "install it".
++//
++// On the C++ API (module _bridge), as register_softmax.cpp: the body is ATen's
++// dense_to_sparse, sparse_coo_to_sparse and sparse_compressed_to_sparse with
++// _to_sparse_check_arguments, copied from TensorConversions.cpp at 846a491bf2d. Those
++// kernels are layout switches over other ops: to_sparse(sparse_dim), to_dense,
++// to_sparse_{csr,csc,bsr,bsc} and _to_sparse.sparse_dim, which stay in ATen (or, for
++// _to_sparse_csr, are this package's since the deletion experiment). The only change: ATen's direct
++// calls of its own kernels (sparse_compressed_to_dense, sparse_compressed_to_sparse
++// and sparse_compressed_to_sparse_{csr,csc,bsr,bsc}) become dispatcher calls.
++//
++// Counter: torch.ops.sparse_ext.bridge_calls("_to_sparse", device, reset), device
++// 0 CPU, 1 CUDA, 2 Meta.
++#include <ATen/ATen.h>
++#include <ATen/SparseCsrTensorUtils.h>
++#include <torch/library.h>
++
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++
++namespace {
++
++using namespace at;
++
++bool use_aten() {
++  const char* v = std::getenv("SPARSETORCH_USE_ATEN");
++  return v && std::strcmp(v, "1") == 0;
++}
++const bool use_aten_at_load = use_aten();
++
++std::atomic<int64_t> to_sparse_calls_[3];
++
++void count(const Tensor& self) {
++  auto d = self.device().type();
++  to_sparse_calls_[d == kCUDA ? 1 : d == kMeta ? 2 : 0]++;
++}
++
++int64_t bridge_calls(c10::string_view family, int64_t device, bool reset) {
++  TORCH_CHECK(family == "_to_sparse", "bridge_calls: unknown family ", family);
++  TORCH_CHECK(device >= 0 && device < 3, "bridge_calls: device must be 0, 1 or 2");
++  return reset ? to_sparse_calls_[device].exchange(0) : to_sparse_calls_[device].load();
++}
++
++// --- copied from ATen (TensorConversions.cpp:1101-1270 at 846a491bf2d) ---
++static inline void _to_sparse_check_arguments(
++    const std::string& funcname,
++    const Tensor& self,
++    std::optional<c10::Layout> layout,
++    OptionalIntArrayRef blocksize,
++    std::optional<int64_t> dense_dim_opt) {
++  auto layout_from = self.layout();
++  auto layout_to = layout.value_or(kSparse);
++
++  auto layout_from_valid = layout_from == kStrided || layout_from == kSparse ||
++      at::sparse_csr::is_sparse_compressed(layout_from);
++  if (!layout_from_valid) {
++    TORCH_CHECK(false, funcname, ": unexpected source layout ", layout_from);
++  }
++  auto layout_to_valid = layout_to == kStrided || layout_to == kSparse ||
++      at::sparse_csr::is_sparse_compressed(layout_to);
++  if (!layout_to_valid) {
++    TORCH_CHECK(false, funcname, ": unexpected source layout ", layout_from);
++  }
++
++  if (layout_from == kSparse && layout_to != kSparse) {
++    if (self.sparse_dim() != 2) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": conversion from ",
++          layout_from,
++          " to ",
++          layout_to,
++          " for input tensors with sparse_dim()!=2 is not supported");
++    }
++  }
++
++  if ((layout_from == kSparseCsr || layout_from == kSparseCsc) &&
++      (layout_to == kSparseBsr || layout_to == kSparseBsc)) {
++    if (sparse_csr::numBatchDimensions(self) > 0) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": conversion from ",
++          layout_from,
++          " to ",
++          layout_to,
++          " for batched inputs is not supported");
++    }
++  }
++
++  if (blocksize.has_value()) {
++    if (blocksize.value().size() != 2) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": blocksize needs to be a tuple of size 2, but got ",
++          blocksize.value().size());
++    }
++    auto blocksize_to = *blocksize;
++    if (blocksize_to[0] <= 0 || blocksize_to[1] <= 0) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": blocksize needs to be positive, but got ",
++          blocksize_to);
++    }
++
++    if (layout_to == kSparseBsr || layout_to == kSparseBsc) {
++      if (layout_from == kSparseBsr || layout_from == kSparseBsc) {
++        auto blocksize_from = at::sparse_csr::getBlockSize(self);
++        if (!(blocksize_to == blocksize_from)) {
++          TORCH_CHECK(
++              false,
++              funcname,
++              ": conversion from ",
++              layout_from,
++              " to ",
++              layout_to,
++              " with blocksize changed from ",
++              blocksize_from,
++              " to ",
++              blocksize_to,
++              " is not supported");
++        }
++      } else {
++        auto dense_dim = (layout_from == kStrided) ? dense_dim_opt.value_or(0)
++                                                   : self.dense_dim();
++        auto sparse_row_dim = -(dense_dim + 2);
++        auto sparse_col_dim = -(dense_dim + 1);
++        if ((self.size(sparse_row_dim) % blocksize_to[0] != 0) ||
++            (self.size(sparse_col_dim) % blocksize_to[1] != 0)) {
++          TORCH_CHECK(
++              false,
++              funcname,
++              ": tensor sparse size (",
++              self.size(sparse_row_dim),
++              ",",
++              self.size(sparse_col_dim),
++              ") must be divisible by given blocksize (",
++              blocksize_to[0],
++              ",",
++              blocksize_to[1],
++              ")");
++        }
++      }
++    } else {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": conversion from ",
++          layout_from,
++          " to ",
++          layout_to,
++          " with blocksize argument given is not supported");
++    }
++  } else {
++    if ((layout_to == kSparseBsr || layout_to == kSparseBsc) &&
++        !(layout_from == kSparseBsr && layout_from == kSparseBsc)) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": conversion from ",
++          layout_from,
++          " to ",
++          layout_to,
++          " without blocksize argument given is not supported");
++    }
++  }
++
++  if (dense_dim_opt.has_value()) {
++    if (layout_from != kStrided) {
++      TORCH_CHECK(
++          false,
++          funcname,
++          ": conversion from ",
++          layout_from,
++          " to ",
++          layout_to,
++          " with dense_dim argument given is not supported");
++    }
++
++    auto dense_dim = *dense_dim_opt;
++    if (layout_to == kSparse) {
++      if (dense_dim == self.dim() && self.dim() > 0) {
++        TORCH_CHECK(
++            false,
++            funcname,
++            ": dense_dim argument must be !=self.dim() when self.dim()>0");
++      }
++      if (dense_dim < 0 || dense_dim > self.dim()) {
++        TORCH_CHECK(
++            false,
++            funcname,
++            ": dense_dim argument must be in [0,",
++            self.dim(),
++            "] range, but ",
++            dense_dim,
++            " is given");
++      }
++    } else {
++      if (dense_dim < 0 || dense_dim > self.dim() - 2) {
++        TORCH_CHECK(
++            false,
++            funcname,
++            ": dense_dim argument must be in [0,",
++            self.dim() - 2,
++            "] range, but ",
++            dense_dim,
++            " is given");
++      }
++    }
++  }
++}
++// --- end of copy ---
++
++Tensor dense_to_sparse(
++    const Tensor& self,
++    std::optional<c10::Layout> layout,
++    OptionalIntArrayRef blocksize,
++    std::optional<int64_t> dense_dim_opt) {
++  count(self);
++  auto layout_to = layout.value_or(kSparse);
++  TORCH_INTERNAL_ASSERT(
++      self.layout() != layout_to,
++      "dense_to_sparse: unexpected same input and output layout");
++  _to_sparse_check_arguments(
++      "dense_to_sparse", self, layout, blocksize, dense_dim_opt);
++
++  switch (layout_to) {
++    case kSparse:
++      return self.to_sparse(self.dim() - dense_dim_opt.value_or(0));
++    case kSparseCsr:
++      return self.to_sparse_csr(dense_dim_opt);
++    case kSparseCsc:
++      return self.to_sparse_csc(dense_dim_opt);
++    case kSparseBsr:
++      return self.to_sparse_bsr(*blocksize, dense_dim_opt);
++    case kSparseBsc:
++      return self.to_sparse_bsc(*blocksize, dense_dim_opt);
++    default:
++      break;
++  }
++
++  TORCH_CHECK(
++      false,
++      "dense_to_sparse: ",
++      self.layout(),
++      " to ",
++      layout_to,
++      " conversion not supported");
++}
++
++Tensor sparse_compressed_to_sparse(
++    const Tensor& self,
++    std::optional<c10::Layout> layout,
++    OptionalIntArrayRef blocksize,
++    std::optional<int64_t> dense_dim_opt) {
++  count(self);
++  auto layout_to = layout.value_or(kSparse);
++  TORCH_INTERNAL_ASSERT(
++      self.layout() != layout_to,
++      "sparse_compressed_to_sparse: unexpected same input and output layout");
++  _to_sparse_check_arguments(
++      "sparse_compressed_to_sparse", self, layout_to, blocksize, dense_dim_opt);
++
++  auto blocksize_ = blocksize.value_or(
++      (self.layout() == kSparseBsr || self.layout() == kSparseBsc)
++          ? at::sparse_csr::getBlockSize(self)
++          : at::DimVector({1, 1}));
++  switch (layout_to) {
++    case kStrided:
++      return self._to_dense(/*dtype=*/std::nullopt, /*masked_grad=*/std::nullopt);
++    case kSparse:
++      return self._to_sparse(2);
++    case kSparseCsr:
++      return self._to_sparse_csr(dense_dim_opt);
++    case kSparseCsc:
++      return self._to_sparse_csc(dense_dim_opt);
++    case kSparseBsr:
++      return self._to_sparse_bsr(blocksize_, dense_dim_opt);
++    case kSparseBsc:
++      return self._to_sparse_bsc(blocksize_, dense_dim_opt);
++    default:
++      break;
++  }
++
++  TORCH_CHECK(
++      false,
++      "sparse_compressed_to_sparse: ",
++      self.layout(),
++      " to ",
++      layout_to,
++      " conversion not supported");
++}
++
++Tensor sparse_coo_to_sparse(
++    const Tensor& self,
++    std::optional<c10::Layout> layout,
++    OptionalIntArrayRef blocksize,
++    std::optional<int64_t> dense_dim_opt) {
++  count(self);
++  auto layout_to = layout.value_or(kSparse);
++  TORCH_INTERNAL_ASSERT(
++      self.layout() != layout_to,
++      "sparse_coo_to_sparse: unexpected same input and output layout");
++  _to_sparse_check_arguments(
++      "sparse_coo_to_sparse", self, layout_to, blocksize, dense_dim_opt);
++
++  switch (layout_to) {
++    case kStrided:
++      return self.to_dense(std::nullopt, std::nullopt);
++    case kSparseCsr:
++      return self.to_sparse_csr(dense_dim_opt);
++    case kSparseCsc:
++      return self.to_sparse_csc(dense_dim_opt);
++    case kSparseBsr:
++      return self.to_sparse_bsr(*blocksize, dense_dim_opt);
++    case kSparseBsc:
++      return self.to_sparse_bsc(*blocksize, dense_dim_opt);
++    default:
++      break;
++  }
++
++  TORCH_CHECK(
++      false,
++      "sparse_coo_to_sparse: ",
++      self.layout(),
++      " to ",
++      layout_to,
++      " conversion not supported");
++}
++
++}  // namespace
++
++TORCH_LIBRARY_FRAGMENT(sparse_ext, m) {
++  m.def("bridge_calls(str family, int device, bool reset=False) -> int", &bridge_calls);
++}
++
++#define IMPL_TO_SPARSE(KEY, FN)                \
++  TORCH_LIBRARY_IMPL(aten, KEY, m) {           \
++    if (use_aten_at_load) return;              \
++    m.impl("_to_sparse", TORCH_FN(FN));        \
++  }
++
++IMPL_TO_SPARSE(CPU, dense_to_sparse)
++IMPL_TO_SPARSE(CUDA, dense_to_sparse)
++IMPL_TO_SPARSE(SparseCPU, sparse_coo_to_sparse)
++IMPL_TO_SPARSE(SparseCUDA, sparse_coo_to_sparse)
++IMPL_TO_SPARSE(SparseCsrCPU, sparse_compressed_to_sparse)
++IMPL_TO_SPARSE(SparseCsrCUDA, sparse_compressed_to_sparse)
++IMPL_TO_SPARSE(SparseCsrMeta, sparse_compressed_to_sparse)
+diff --git a/sparse-ext/setup.py b/sparse-ext/setup.py
+index 3ad40b0..5017e09 100644
+--- a/sparse-ext/setup.py
++++ b/sparse-ext/setup.py
+@@ -1,7 +1,9 @@
+ # sparse-ext: sparse kernels registered into aten from outside the pytorch tree.
+ # - mul.out for SparseCPU/SparseCUDA, over ATen's kernels;
+ # - sin, abs, log1p, _sparse_softmax(_backward_data), _to_sparse_csr, whose ATen
+-#   kernels are deleted by pytorch-delete.diff.
++#   kernels are deleted by pytorch-delete.diff;
++# - _to_sparse for CPU, CUDA and the sparse keys, whose ATen kernels are deleted or
++#   stubbed by pytorch-aoti.diff.
+ # SPARSETORCH_USE_ATEN=1 at load time skips the aten registrations.
+ #
+ #   pip install --no-build-isolation -v sparse-ext
+@@ -26,14 +28,15 @@ TARGET = "-DTORCH_TARGET_VERSION=0x020a000000000000"
+ # No device code: the CUDA kernels are composed of dispatcher calls, so one C++
+ # module serves every key.
+ # _C: stable ABI only. _bridge: register_softmax.cpp, on the C++ API (a stable
+-# kernel cannot raise IndexError); tied to the torch it was built against.
++# kernel cannot raise IndexError), and to_sparse.cpp, ATen's kernels copied on the
++# C++ API; tied to the torch it was built against.
+ setup(
+     name="torch-sparse-ext",
+-    version="0.0.3",
++    version="0.0.4",
+     packages=["torch_sparse_ext"],
+     ext_modules=[CppExtension("torch_sparse_ext._C", sources=[str(CSRC / "mul.cpp"), str(CSRC / "families.cpp")],
+                               extra_compile_args={"cxx": ["-O3", TARGET]}, py_limited_api=True),
+-                 CppExtension("torch_sparse_ext._bridge", sources=[str(CSRC / "register_softmax.cpp")],
++                 CppExtension("torch_sparse_ext._bridge", sources=[str(CSRC / "register_softmax.cpp"), str(CSRC / "to_sparse.cpp")],
+                               extra_compile_args={"cxx": ["-O3"]}, py_limited_api=True)],
+     cmdclass={"build_ext": BuildExtension},
+     options={"bdist_wheel": {"py_limited_api": "cp39"}},
+diff --git a/sparse-ext/torch_sparse_ext/__init__.py b/sparse-ext/torch_sparse_ext/__init__.py
+index 5adb0d3..631ac91 100644
+--- a/sparse-ext/torch_sparse_ext/__init__.py
++++ b/sparse-ext/torch_sparse_ext/__init__.py
+@@ -1,6 +1,7 @@
+ """Sparse kernels for aten from outside the pytorch tree: mul.out over ATen's kernels;
+ sin, abs, log1p, _sparse_softmax(_backward_data) and _to_sparse_csr,
+-whose ATen kernels are deleted by pytorch-delete.diff. Loaded by ``import torch``
++whose ATen kernels are deleted by pytorch-delete.diff; and
++_to_sparse, whose ATen kernels are deleted or stubbed by pytorch-aoti.diff. Loaded by ``import torch``
+ through the ``torch.backends`` entry point; with TORCH_DEVICE_BACKEND_AUTOLOAD=0,
+ ``import torch_sparse_ext`` loads it.
+ 
+@@ -10,6 +11,8 @@ registrations and ATen's kernels serve. The package's own ops stay defined:
+   kernel, device 0 CPU, 1 CUDA;
+ - torch.ops.sparse_ext.calls(family, device, reset=False): the same for the deleted
+   families, device 0 CPU, 1 CUDA, 2 Meta;
++- torch.ops.sparse_ext.bridge_calls(family, device, reset=False): the same for
++  _to_sparse (module _bridge);
+ - torch.ops.sparse_ext.uses_aten(): whether the switch was on at load;
+ - torch.ops.sparse_ext.mul_out(self, other, *, out): the same kernel by its own name.
+ """
+@@ -33,10 +36,12 @@ FAMILIES = ("sin", "abs", "log1p", "_sparse_softmax", "_sparse_softmax_backward_
+ 
+ 
+ def calls(reset=False):
+-    """{family: {'cpu': n, 'cuda': n, 'meta': n}} for mul and the deleted families."""
++    """{family: {'cpu': n, 'cuda': n, 'meta': n}} for mul, the deleted families and _to_sparse."""
+     out = {"mul": dict(mul_calls(reset), meta=0)}
+     for f in FAMILIES:
+         out[f] = {d: torch.ops.sparse_ext.calls(f, i, reset) for i, d in enumerate(("cpu", "cuda", "meta"))}
++    out["_to_sparse"] = {d: torch.ops.sparse_ext.bridge_calls("_to_sparse", i, reset)
++                         for i, d in enumerate(("cpu", "cuda", "meta"))}
+     return out
+ 
+ 

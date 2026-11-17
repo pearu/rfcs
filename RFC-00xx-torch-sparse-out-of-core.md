@@ -140,6 +140,10 @@ these stories.
    2. The device's maintainers review them, with a sparse owner as co-reviewer.
    3. The sparse project decides which backends to add, by its own bar: user demand and
       an owner who commits.
+5. **AOTInductor's C shims of moved ops call the dispatcher** (R2, a torchgen change),
+   so that compiled models keep loading and reach the package
+   ([A.2](#a2-how-torch-calls-the-package-and-the-hard-cases)). So far this concerns
+   only `_to_sparse`.
 
 ### What stays in core
 
@@ -335,9 +339,19 @@ none: the `Tensor` methods, `torch.sparse_*_tensor`, `Embedding(sparse=True)` an
 | MKL and cuSPARSE | cuSPARSE through the stable ABI (R1). For MKL, the package's owners choose between the shim and their own kernels. |
 | Meta kernels | Registered with each family. 150 of 153 are the CPU kernel itself. |
 | Inductor's 2:4 lowering ([mm.py:1128-1174][mm-lower]) | Stays until TorchAO has its own op (F), then goes with the `aten` op. |
+| AOTInductor's C shim for `_to_sparse` ([c_shim_cpu.cpp:497-503][aoti-shim]) | It calls the CPU and CUDA kernels directly, not through the dispatcher. After deletion it would reach the stub even with the package installed, and torchgen refuses to delete it outright, since compiled models call it by name. The shim keeps its name and signature, so compiled models still load; its body becomes a dispatcher call (a torchgen change, R2). |
+| Compressed `mm` on CUDA calling triton ([SparseBlasImpl.cpp:241-255][bsr-triton]) | Moves with the compressed `mm` family (R3). The package registers the kernel from Python, and that kernel chooses between triton and C++. `torch.cuda`'s registration of the triton ops leaves core. |
 
 Replacing the masked-semantics ops with `torch.masked` is a later decision under
 pytorch's deprecation policy, not part of the move.
+
+**The compiler stack.** `torch.compile` refuses sparse tensors today, at the input
+([builder.py:3449-3460][dynamo-refuse]), and this doesn't change. `torch.export`
+captures sparse ops ([config.py:522-526][dynamo-export]); its graphs, like TorchScript
+archives, name aten ops and layouts that stay in core, so they keep loading and run
+through the package. Fake tensors, AOTAutograd, FX, functionalization and vmap check
+the layout only, or build sparse fakes from the core constructors. They need no hook.
+One Python fake impl (`_spdiags`) stays with its schema, as the autograd formulas do.
 
 **Backward compatibility.** Each release is backward compatible with the previous
 one. With the package, five families moved and deleted from ATen gave the same result
@@ -367,7 +381,7 @@ wrong result (see [A.9](#a9-evidence-kernel-families-moved)).
 |---|---|
 | R0 | the `sparse` test config; a marker for the 122 sparse tests in core test files |
 | R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS. **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops (in progress: [pytorch#203903](https://github.com/pytorch/pytorch/pull/203903), a draft); (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle; (4) typed exceptions: a kernel's `IndexError` reaches Python as `RuntimeError` (the message already does, [pytorch#180135](https://github.com/pytorch/pytorch/pull/180135)).** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
-| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; a stub, generated for each deleted sparse kernel, that says "install `sparsetorch`", and no override warning when the package replaces a stub ([OperatorEntry.cpp:213-225][override-warn]); a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
+| R2 | a CI job that builds the package from a pin, and the dependency in the wheel requirements; a stub, generated for each deleted sparse kernel, that says "install `sparsetorch`", and no override warning when the package replaces a stub ([OperatorEntry.cpp:213-225][override-warn]); AOTInductor C shims that call the dispatcher for moved ops, with their headers unchanged ([gen_aoti_c_shim.py:458-482][aoti-gen]); a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
 | R3 | an extension point for `Adagrad`'s sparse step |
 
 ### A.5 New backends: the core pieces
@@ -461,6 +475,23 @@ through core's unchanged formulas. Without it, every failure was an error, none 
 result. `_sparse_softmax` needed a C++ bridge: a stable kernel's `IndexError` reaches
 Python as `RuntimeError`, the fourth piece. A backend fallback missed composite and
 dense-key kernels, hence the stubs.
+
+A fifth checked the compiler stack on the fourth's build
+([`pytorch-aoti.diff`](RFC-00xx-assets/pytorch-aoti.diff),
+[`sparse-ext-aoti.diff`](RFC-00xx-assets/sparse-ext-aoti.diff)). With the package,
+`test/export/test_sparse.py` (207 tests) and the dynamo sparse tests (5) gave the same
+result as main, per test; without it, the 52 export tests that reach `abs` or
+`_to_sparse_csr` raised an error. A program over `abs` on COO, saved by `torch.export`
+on main, loaded on the modified torch and ran only with the package
+([`export-save.py`](RFC-00xx-assets/export-save.py),
+[`export-load.py`](RFC-00xx-assets/export-load.py)). `_to_sparse`'s dense kernel then
+became a stub, since torchgen refuses to delete it outright. AOTInductor models
+compiled on main and on the modified torch hit the stub even with the package loaded,
+because the C shim calls the CPU kernel directly. Generating the shim's body as a
+dispatcher call, headers unchanged, made both reach the package
+([`aoti-compile.py`](RFC-00xx-assets/aoti-compile.py),
+[`aoti-run.py`](RFC-00xx-assets/aoti-run.py)). CUDA was checked at the C shim, not
+through a compiled CUDA model: triton was not installed.
 
 [^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
     and the same with `label:"release notes: sparse"`; against 891 random PRs of the
@@ -574,3 +605,8 @@ Not implementing on project X now. Will revisit the decision in 1 year.
 [usecases]: https://github.com/pytorch/pytorch/issues/10043
 [bae]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453318175
 [singlecell]: https://github.com/pytorch/pytorch/issues/10043#issuecomment-966518421
+[aoti-shim]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/csrc/inductor/aoti_torch/generated/c_shim_cpu.cpp#L497-L503
+[bsr-triton]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/native/sparse/SparseBlasImpl.cpp#L241-L255
+[dynamo-refuse]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/_dynamo/variables/builder.py#L3449-L3460
+[dynamo-export]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/_dynamo/config.py#L522-L526
+[aoti-gen]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torchgen/gen_aoti_c_shim.py#L458-L482
