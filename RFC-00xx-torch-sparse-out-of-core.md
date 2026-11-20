@@ -544,7 +544,8 @@ it.
 | CI | Sparse leaves pytorch's jobs. | Sparse is built in every job. |
 
 G wins on users and effort; A on maintenance. G couples core to sparse for good, and its
-weekly pin needs a sparse owner to bump it. XPU's model works because Intel staffs it.
+weekly pin needs a sparse owner to bump it. XPU's model works because it has dedicated
+maintainers.
 
 ### A.8 Technical risks
 
