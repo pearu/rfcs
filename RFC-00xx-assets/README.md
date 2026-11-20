@@ -8,8 +8,9 @@ ATen's kernels, which stay. Deletion: five families (`sin`, `abs`, `log1p`,
 from the package. Compiler stack: `torch.export` and AOTInductor over moved families,
 and `_to_sparse` made a stub. MPS and XPU not tried.
 
-User stories: who uses torch.sparse and what for, from public code, packages,
-papers, forums and issues, counted in November 2026. Three reports, no code.
+User stories: who uses torch.sparse and what for, from public code, packages, papers,
+forums and issues, counted in November 2026. Four reports, and a probe script with its
+function list.
 
 | File | What it is | Applies to |
 |---|---|---|
@@ -33,6 +34,9 @@ papers, forums and issues, counted in November 2026. Three reports, no code.
 | `user-stories.md` | The user-stories report: sources, filters, counts by field, owner, layout and device, the ranking, the 50 highest-ranked projects read by hand, and the limits. | the appendix "User stories in detail" |
 | `usage-baseline.md` | torch.sparse beside linalg, nested tensors and DTensor: code size, maintainers, issues, PRs, reviews, commits, and projects and packages calling each. | B.2 |
 | `when-sparse-pays-off.md` | Public measurements of when sparse layouts pay off against dense: the BSR Triton kernels, papers with and without gains, forums. | B.4 |
+| `sparse-landscape.md` | torch.sparse in its landscape: who uses cuSPARSE and cuSPARSELt and what they cost pytorch, the scientific users and SciPy, where users' voices go, torch.sparse beside four other sparse libraries, torch-xpu-ops and sparse, option B measured, the consortium's benchmark suite, and comparable projects. | B.6–B.9, A.5, A.6, Vision, Prior Art, the governance footnote |
+| `cross-library-probe.py` | Calls each Array API 2025.12 function that takes an array once on a small sparse input in one library (torch COO/CSR on CPU or CUDA, SciPy, PyData `sparse`, CuPy), and classifies it as works, densifies or fails; writes JSON. | B.8 |
+| `array-api-2025.12-functions.json` | The Array API 2025.12 function names by group, from the specification's stubs at `ff497ed8`; the probe's input. | B.8 |
 
 ## Reproduce
 
@@ -61,6 +65,7 @@ pip install --no-build-isolation -v sparse-ext
 python aoti-compile.py OUT main                     # on main
 python aoti-compile.py OUT modified                 # on the compiler-stack build, with the package
 python aoti-run.py OUT                              # on the compiler-stack build, with and without the package
+python cross-library-probe.py torch-coo out.json array-api-2025.12-functions.json   # likewise torch-csr, torch-coo-cuda, torch-csr-cuda; scipy-coo, scipy-csr, pydata-coo, cupyx-csr with SciPy 1.18.1, sparse 0.19.3, CuPy 14.2.0
 ```
 
 ## Tests
