@@ -384,7 +384,7 @@ question.
    Decided at R0. Without owners, sparse stays in core under E + D.\
    Ask: albanD, malfet
 3. Will core commit to the agreement on new backends?\
-   Ask: malfet
+   Ask: malfet, EikanWang
 4. Will pytorch CI host a job, written and maintained by the sparse project, that builds
    the package from a commit pin during R2–R3, as for triton, on every platform torch
    ships?\
@@ -396,7 +396,7 @@ question.
    Ask: janeyx99; for the cuSPARSE handle, also eqy
 7. If not, would core take G for sparse, as for XPU, with the sparse project bumping the
    pin?\
-   Ask: malfet
+   Ask: malfet, EikanWang
 8. The XPU maintainers ([merge_rules.yaml:552-563][xpumr]): under A, the package
    registers the generic `SparseXPU` and `SparseCsrXPU` kernels
    ([A.6](#a6-xpu-and-mps)). Would you test them there, or take them into
