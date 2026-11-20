@@ -814,7 +814,7 @@ memory traffic dominates.
     "POSE: Phase I: Accelerating the Sparse Array Programming Ecosystem", 2026-08 to 2027-07.
     The [Sparse Array Consortium](https://github.com/SparseArrayConsortium) lists Finch,
     Binsparse, Array API sparse extensions and the Sparse Array Programming Suite, whose
-    PyTorch wrapper works around them
+    PyTorch wrapper works around the ops torch.sparse lacks
     ([saps_pytorch.py:196-197](https://github.com/SparseArrayProgrammingSuite/SparseArrayProgrammingSuite/blob/8c62415a87305e23db24f12996f34db73dc74d8a/frameworks/saps_pytorch.py#L196-L197),
     [444-446](https://github.com/SparseArrayProgrammingSuite/SparseArrayProgrammingSuite/blob/8c62415a87305e23db24f12996f34db73dc74d8a/frameworks/saps_pytorch.py#L444-L446)).
 
