@@ -220,7 +220,7 @@ In the table, "(o)" marks an optional path: a flag, a model choice, or a fallbac
 | 46 | PhiML | org | sci | sparse matrices throughout its torch backend | all five | follows input |
 | 47 | torch-harmonics | org | sci | DISCO filter basis, densified | COO | follows input |
 | 48 | pypose | org | sci | BSR/CSR matmul, sparse Jacobians in an opt-in sparse LM (o; needs `bae`); MPS wanted (pytorch#201801) | COO, CSR, BSR | follows input |
-| 49 | torch-sla | org | sci | differentiable sparse solvers. Its `torch.sparse.spsolve` backend probes first; its authors write that the op "is only registered for the MPS backend in mainline PyTorch", but pytorch main registers `_spsolve` for CUDA (in cuDSS builds, not ROCm) and XPU, not for MPS or CPU (`native_functions.yaml:14698-14702`, at 2026-11-02) | COO, CSR | follows input; CUDA, ROCm, CPU |
+| 49 | torch-sla | org | sci | differentiable sparse solvers. Its `torch.sparse.spsolve` backend probes first; its authors write that the op "is only registered for the MPS backend in mainline PyTorch", but pytorch main registers `_spsolve` for CUDA and XPU, not for MPS or CPU; on CUDA it runs only in builds with cuDSS, not on ROCm (`native_functions.yaml:14698-14702`, `SparseCsrTensorMath.cu:717-721`, at 2026-11-02) | COO, CSR | follows input; CUDA, ROCm, CPU |
 | 50 | anemoi-graphs | org | sci | graph edge weights exported as a sparse matrix (o) | COO | follows input |
 
 **What the hand check changed**
@@ -240,7 +240,7 @@ In the table, "(o)" marks an optional path: a flag, a model choice, or a fallbac
 - **Small parts of large projects.** In many top projects sparse is one optional component: a model adapter, a loss, an experimental path.
 - **A data format, not compute.** Several use sparse tensors only to build or ship data, densifying at once: CSR as a wire encoding in tinker and Fireworks, COO as a scatter idiom in HanLP and PyPOTS.
 - **MPS is avoided where it would be needed:** suite2p, instanseg and omicverse route around it.
-- **`spsolve` is hard to rely on.** torch-sla probes for `torch.sparse.spsolve` before using it. Its authors write that the op runs only on MPS, but pytorch main registers `_spsolve` for CUDA (in cuDSS builds, not ROCm) and XPU, not for MPS or CPU (`native_functions.yaml:14698-14702`, at 2026-11-02). A forum post (S7) on an RTX 40 card shows the cuDSS requirement in practice.
+- **`spsolve` is hard to rely on.** torch-sla probes for `torch.sparse.spsolve` before using it. Its authors write that the op runs only on MPS, but pytorch main registers `_spsolve` for CUDA and XPU, not for MPS or CPU; on CUDA it runs only in builds with cuDSS, not on ROCm (`native_functions.yaml:14698-14702`, `SparseCsrTensorMath.cu:717-721`, at 2026-11-02). A Stack Overflow question (S7, stackoverflow.com/questions/79227337) on an RTX 40 card shows the cuDSS requirement in practice.
 - **Some sparse paths were removed in 2026:**
   - **torchao** removed its `sparsity/` package at HEAD "due to lack of widespread usage of this feature" (pytorch/ao#4728). The latest release, v0.18.0, still has it.
   - **NeMo** removed its sparse loss with "older and non-maintained models".

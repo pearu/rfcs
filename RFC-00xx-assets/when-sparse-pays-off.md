@@ -55,8 +55,9 @@ not that torch.sparse does.
 
 **Gaps named by papers.** torch-sla (2601.13994): "its only sparse solve, spsolve, is non-differentiable and
 implemented as a CPU-only SuperLU wrapper for square systems. torch.linalg is dense-only." This is the
-authors' claim. pytorch main registers `_spsolve` for CUDA (in cuDSS builds, not ROCm) and XPU, not for
-CPU or MPS (`native_functions.yaml:14698-14702`, at 2026-11-02).
+authors' claim. pytorch main registers `_spsolve` for CUDA and XPU, not for CPU or MPS; on CUDA it runs only
+in builds with cuDSS, not on ROCm (`native_functions.yaml:14698-14702`, `SparseCsrTensorMath.cu:717-721`,
+at 2026-11-02).
 
 **Reading.**
 - **Where gains appear:** they come with very sparse data (0.01 % density in bundle adjustment, more than 80 % sparsity in retrieval), with structure (blocks, Kronecker factors, 2:4), and with the right layout (CSR, not COO, for attention).

@@ -142,22 +142,25 @@ that depends on pytorch, papers, forums and pytorch issues. Method, tables and l
 - **Demand not met.**
   - MPS: suite2p, instanseg and omicverse route their sparse code around it, and pypose's bundle
     adjustment asks for CSR and BSR on MPS ([pytorch#201801][bae]).
-  - Solvers: `spsolve` is registered only for CUDA builds with cuDSS and for XPU
-    ([native_functions.yaml:14698-14702][spsolve]); torch-sla ships its own
+  - Solvers: `spsolve` runs only in CUDA builds with cuDSS, and on XPU
+    ([native_functions.yaml:14698-14702][spsolve],
+    [SparseCsrTensorMath.cu:717-721][spsolve-cudss]); torch-sla ships its own
     differentiable solvers.
   - Forum questions and issues name missing ops (18 questions), autograd through
     sparse inputs (12), performance (9), solvers (5), fp16 and bf16, and MPS.
     [pytorch#10043][usecases], open since 2018, collects use cases, such as row
     slicing of CSR tensors on GPU in single-cell biology ([comment][singlecell]).
-- **Signs of removal.** In 2026, TorchAO removed its sparsity front-end "due to lack of
-  widespread usage of this feature" ([pytorch/ao#4728][ao4728]); the kernels it used
-  stay in torch. xformers removed its 2:4 code and points users to torch.sparse. NeMo
-  and PhysicsNeMo dropped their sparse paths in clean-ups.
-- **Against linalg and nested tensors.** In equal-size code-search samples, 959
-  projects call sparse, 1,903 call `torch.linalg` and 169 call nested tensors. Sparse
-  has 1.4× linalg's ATen code and about half its issues and PRs. Sparse pays off only
-  where data are sparse enough: published measurements find gains at very high
-  sparsity, with block or 2:4 structure and the right layout, and none at moderate
+- **Signs of removal.** In 2026, TorchAO removed its sparsity package "due to lack of
+  widespread usage of this feature" ([pytorch/ao#4728][ao4728]); torch keeps the
+  semi-structured and BSR kernels it called, and TorchAO keeps a float8 2:4 format in
+  its quantization. This bears on F, which stays an open point (question 5). xformers
+  removed its 2:4 code and points users to torch.sparse. NeMo and PhysicsNeMo dropped
+  their sparse paths in clean-ups.
+- **Against linalg and nested tensors.** In equal-size code-search samples, 959 projects
+  call sparse and 1,903 call `torch.linalg`; in a sample half that size, 169 call nested
+  tensors. Sparse has 1.4× linalg's ATen code and about half its issues and PRs. Sparse
+  pays off only where data are sparse enough: published measurements find gains at very
+  high sparsity, with block or 2:4 structure and the right layout, and none at moderate
   sparsity. So a user base smaller than linalg's, and concentrated where data are
   sparse, is expected.
 - **Limits.** Code search is sampled and sees only public default branches, so the
@@ -558,8 +561,8 @@ measurements of when sparse pays off are
 - **Sources.**
   - GitHub code search, ten queries, sampled; and the dependents of PyG, DGL, TorchAO
     and torch_sparse.
-  - A census of PyPI: of the 474,629 projects changed in the last 24 months, the
-    20,661 whose newest wheel declares torch were downloaded and scanned.
+  - A census of PyPI: of the 474,629 projects changed in the last 24 months, the 20,661
+    whose newest wheel declares torch were downloaded and scanned, all but 10.
   - All 752 conda-forge packages that depend on pytorch.
   - 28 papers read in full; 53 forum questions and 22 pytorch issues; Hugging Face;
     ecosystem lists, among them the PyTorch landscape.
@@ -638,7 +641,7 @@ sparse and linalg, and half that size for nested tensors and DTensor.
 | … reviewed by a listed maintainer | 42 % | 19 % | 2 of 9 | 31 % |
 | Distinct human reviewers | 36 | 44 | 7 | 99 |
 | Projects calling it, in the sample | 959 | 1,903 | 169 | 186 |
-| conda-forge packages calling it | 57 | 193 | 8 | 11 |
+| conda-forge packages calling it, before the copy and hand-check steps | 57 | 193 | 8 | 11 |
 
 linalg's ATen count includes dense matmul. DTensor's maintainers are those of
 `torch.distributed`, and most of its use comes through training frameworks, which
@@ -652,8 +655,9 @@ direct calls don't show.
   and densify at once: CSR as a wire encoding, COO as a scatter idiom.
 - **MPS is avoided where it would be needed.** suite2p falls back to CPU "until sparse
   works on MPS", instanseg moves to CPU, and omicverse goes to MLX on Apple hardware.
-- **`spsolve` is hard to rely on.** torch-sla probes for it before use. A forum post on
-  an RTX 40 card shows the cuDSS requirement in practice.
+- **`spsolve` is hard to rely on.** torch-sla probes for it before use. A Stack Overflow
+  question on an RTX 40 card ([79227337](https://stackoverflow.com/questions/79227337))
+  shows the cuDSS requirement in practice.
 - **Requests.** Of the 75 issue and forum records, 13 name a project and 5 of these
   are requests. On MPS, they ask for CSR (3), COO (3) and BSR (1); on 2:4, for batched
   matrices, Conv2d and training.
@@ -825,6 +829,7 @@ Not implementing on project X now. Will revisit the decision in 1 year.
 [usecases]: https://github.com/pytorch/pytorch/issues/10043
 [bae]: https://github.com/pytorch/pytorch/pull/201801#issuecomment-6453318175
 [spsolve]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/native/native_functions.yaml#L14698-L14702
+[spsolve-cudss]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/aten/src/ATen/native/sparse/cuda/SparseCsrTensorMath.cu#L717-L721
 [ao4728]: https://github.com/pytorch/ao/pull/4728
 [singlecell]: https://github.com/pytorch/pytorch/issues/10043#issuecomment-966518421
 [aoti-shim]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/torch/csrc/inductor/aoti_torch/generated/c_shim_cpu.h#L47
