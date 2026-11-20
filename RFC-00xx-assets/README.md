@@ -1,4 +1,4 @@
-# Assets of RFC-00xx: experiments moving sparse kernel families out of core
+# Assets of RFC-00xx: experiments moving sparse kernel families out of core, and the user stories
 
 Four experiments. Out of tree: COO `mul` and `addmm`, CPU and CUDA, removed from ATen
 and registered from a package built on the stable ABI, which `import torch` loads
@@ -7,6 +7,9 @@ ATen's kernels, which stay. Deletion: five families (`sin`, `abs`, `log1p`,
 `_sparse_softmax`, `_to_sparse_csr`) deleted from ATen for CPU and CUDA and registered
 from the package. Compiler stack: `torch.export` and AOTInductor over moved families,
 and `_to_sparse` made a stub. MPS and XPU not tried.
+
+User stories: who uses torch.sparse and what for, from public code, packages,
+papers, forums and issues, counted in November 2026. Three reports, no code.
 
 | File | What it is | Applies to |
 |---|---|---|
@@ -27,6 +30,9 @@ and `_to_sparse` made a stub. MPS and XPU not tried.
 | `aoti-run.py` | Loads and runs the compiled packages, with the package's call counters. | the compiler-stack pytorch, with or without the package |
 | `correctness.py` | 1414 checks of `mul` and `addmm` against dense references, CPU and CUDA | either torch |
 | `bench.py` | the timings below; prints JSON | either torch |
+| `user-stories.md` | The user-stories report: sources, filters, counts by field, owner, layout and device, the ranking, the 50 highest-ranked projects read by hand, and the limits. | the appendix "User stories in detail" |
+| `usage-baseline.md` | torch.sparse beside linalg, nested tensors and DTensor: code size, maintainers, issues, PRs, reviews, commits, and projects and packages calling each. | B.2 |
+| `when-sparse-pays-off.md` | Public measurements of when sparse layouts pay off against dense: the BSR Triton kernels, papers with and without gains, forums. | B.4 |
 
 ## Reproduce
 
