@@ -77,10 +77,11 @@ say who the users are and what they want.
   peft and PyG in deep learning; POT, linear_operator and cellpose in scientific
   computing. The scientific users are the steadier base: 79 % maintained, against
   49 % in deep learning.
-- **Nothing replaces it.** The libraries with their own sparse formats for PyTorch
-  are thinly maintained or archived. The maintained array libraries (SciPy, CuPy,
-  PyData `sparse`) have no autograd, and nvmath-python's sparse module is
-  experimental and NVIDIA-only. Projects consolidate onto torch.sparse: xformers
+- **Nothing replaces it.** The libraries with a general sparse layout set of their
+  own for PyTorch (torch_sparse, DGL) last released in 2023 and 2024. The maintained
+  ones are narrow (solvers and gradients), have no autograd (SciPy, CuPy, PyData
+  `sparse`), or are experimental and NVIDIA-only (nvmath-python's sparse module).
+  Projects consolidate onto torch.sparse: xformers
   removed its 2:4 code and points users to it. New work builds on it: papers from
   2025–2026 measure gains with it, and torch-sla (2026) builds differentiable solvers
   around it.
