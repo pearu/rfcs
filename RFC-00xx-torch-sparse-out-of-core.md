@@ -21,11 +21,11 @@ All pytorch line numbers below are at commit
   people commit to own the project, sparse stays in core under E + D.
 - Why keep it: of five sparse array libraries compared, torch.sparse is the only one
   with GPU support, autograd, and batched and hybrid layouts together
-  ([B.8](#b8-torchsparse-beside-other-sparse-libraries)). At least 1,798 public
-  projects call it; in science it is the GPU and torch side of matrices that SciPy
-  builds. Demand is hidden: the maintainers of 4.1 % of these projects take part in
-  pytorch's sparse issues, and gaps are worked around in the projects' own code. The
-  direction is targeted development for named users ([Vision](#vision)).
+  ([B.8](#b8-torchsparse-beside-other-sparse-libraries)). At least 1,798 public projects
+  call it; in science it is mostly the GPU and torch side of matrices that SciPy builds.
+  Demand is hidden: the maintainers of 4.1 % of these projects take part in pytorch's
+  sparse issues, and gaps are worked around in the projects' own code. The direction is
+  targeted development for named users ([Vision](#vision)).
 - The asks of core are only what the sparse project can't do itself; it writes the
   PRs. They are: the new repo; review of four stable-ABI pieces; hosting a CI job that
   builds the package from a commit pin, as for triton; accepting small PRs that let
@@ -157,11 +157,10 @@ missing ops that zero semantics allows, 39 of the Array API functions that PyDat
 arrays out ([data_interchange.rst:88-98][aa-sparse]); a sparse interchange proposal has
 been open since 2024
 ([data-apis/array-api#840](https://github.com/data-apis/array-api/issues/840)), and a
-standard must settle what unspecified elements are: zero, or a fill value, as a draft
-RFC proposed for torch.sparse
-([pytorch/rfcs#8](https://github.com/pytorch/rfcs/pull/8)). torch.sparse would
-contribute its layout model and its semantics, but not be the reference: PyData `sparse`
-runs twice as many of the standard's functions
+standard must settle what unspecified elements are: zero, or a fill value, as an RFC
+proposed for torch.sparse ([pytorch/rfcs#8](https://github.com/pytorch/rfcs/pull/8)).
+torch.sparse would contribute its layout model and its semantics, but not be the
+reference: PyData `sparse` runs twice as many of the standard's functions
 ([B.8](#b8-torchsparse-beside-other-sparse-libraries)). The work would be done with the
 Sparse Array Consortium.[^consortium]
 
@@ -183,10 +182,9 @@ and release it, and a rule for who breaks ties on design decisions (question 2).
 Enough interest means enough owners to review each other's PRs, so that no sparse PR
 waits on core, and user stories behind the project's priorities.
 
-Owners are expected to have their time supported by an organization. Experience with
-comparable projects shows that a project lasts when more than one organization backs it,
-when it has written governance from the start, and when its CI doesn't depend on a single
-funder.[^lasts]
+Owners are expected to have their time supported by an organization. Comparable projects
+suggest that a project lasts when more than one organization backs it, when it has
+written governance, and when its CI doesn't depend on a single funder.[^lasts]
 
 If that is not met at R0, nothing moves: sparse, 2:4 included, stays in core under
 E + D. That is a sound end state, not a failure. The question can be reopened when
@@ -330,10 +328,12 @@ direction (question 2).
 
 **Committed:** pearu, the author of this RFC and of two earlier sparse RFCs, a roadmap
 ([pytorch/rfcs#6](https://github.com/pytorch/rfcs/pull/6)) and a fill-value property
-([pytorch/rfcs#8](https://github.com/pytorch/rfcs/pull/8)), both drafts; sparse layouts
-and kernels ([pytorch#129645](https://github.com/pytorch/pytorch/pull/129645));
-stable-ABI work ([pytorch#167923](https://github.com/pytorch/pytorch/pull/167923), and
-the port of torchaudio to the stable ABI,
+([pytorch/rfcs#8](https://github.com/pytorch/rfcs/pull/8)), both still open; sparse
+layouts and kernels (pinned memory for all five layouts,
+[pytorch#129645](https://github.com/pytorch/pytorch/pull/129645); int8 BSR Triton
+kernels, [pytorch#133855](https://github.com/pytorch/pytorch/pull/133855)); stable-ABI
+work ([pytorch#167923](https://github.com/pytorch/pytorch/pull/167923), and the port of
+torchaudio to the stable ABI,
 [pytorch/audio#4137](https://github.com/pytorch/audio/pull/4137),
 [pytorch/audio#4142](https://github.com/pytorch/audio/pull/4142)). More owners: TBD;
 seeking them is one of this RFC's goals.
@@ -402,11 +402,11 @@ A against G, in detail: [A.7](#a7-a-against-g).
   made for out-of-tree devices ([torch/\_\_init\_\_.py:3531-3546][autoload]); R2 loads
   the kernels this way.
 - **RFC-0050**: cross-repository CI for out-of-tree backends.
-- **The Sparse Array Programming Suite** of the Sparse Array Consortium benchmarks sparse
-  array libraries through the Array API. torch.sparse is one backend of eleven there, not
-  a reference ([`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §7). This
-  RFC proposes working with the consortium on a cross-library standard
-  ([Vision](#vision)).
+- **The Sparse Array Programming Suite** of the Sparse Array Consortium benchmarks
+  sparse array libraries through the Array API. PyTorch is one of the ten frameworks
+  there, run on CPU and GPU, and not a reference
+  ([`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §7). This RFC proposes
+  working with the consortium on a cross-library standard ([Vision](#vision)).
 
 ## **How we teach this**
 
@@ -874,11 +874,11 @@ Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §1.
 
 ### B.7 Scientific users and SciPy
 
-Of the 489 scientific projects whose code was scanned in full, 312 (64 %) also use
-scipy.sparse, against 47 % in a sample of 145 deep-learning projects. 201 use both
-libraries in one file, mostly to convert between them, and 112 call `scipy.sparse.linalg`:
-`eigsh` (50), `spsolve` (45), `cg` (28), `splu` (25). So in science torch.sparse is the GPU
-and torch side of matrices that SciPy builds and solves, not a replacement for SciPy.
+Of the 489 scientific projects whose code was scanned, 312 (64 %) also use scipy.sparse,
+against 47 % in a sample of 145 deep-learning projects. 201 use both libraries in one
+file, mostly to convert between them, and 112 call `scipy.sparse.linalg`: `eigsh` (50),
+`spsolve` (45), `cg` (28), `splu` (25). So in science torch.sparse is mostly the GPU and
+torch side of matrices that SciPy builds and solves, not a replacement for SciPy.
 Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §2.
 
 ### B.8 torch.sparse beside other sparse libraries
@@ -911,10 +911,10 @@ Details, with each library's layouts, semantics and status:
 The maintainers (the owner and the top 3 contributors) of 69 of 1,702 census projects,
 4.1 %, have authored or commented on a pytorch issue or PR labeled `module: sparse`; of
 the 36 projects with 10 or more PyPI dependents, 6 have. In the 634 projects whose code
-was scanned in full, 22 comments in 20 projects record a torch.sparse gap worked around
-locally (MPS, half-precision matmul, CSR operations, `spdiags` on CUDA, solves on HIP),
-and none links a pytorch issue. Matching is by exact GitHub login, so these are lower
-bounds. Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
+was scanned, 22 comments in 20 projects record a torch.sparse gap worked around locally
+(MPS, half-precision matmul, CSR operations, `spdiags` on CUDA, solves on HIP), and none
+links a pytorch issue. Matching is by exact GitHub login, so these are lower bounds.
+Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
 
 [^prs]: GitHub search, 2026-11-16: `repo:pytorch/pytorch is:pr created:2025-11-16..2026-11-16 label:"module: sparse"`,
     and the same with `label:"release notes: sparse"`; against 891 random PRs of the

@@ -57,16 +57,18 @@ time.
 - **Commits:** 110 commits touched the 17 source files that hold pytorch's cuSPARSE and
   cuSPARSELt code (13 of them reverts). 40 of these touched the 4 cuSPARSELt files.
   - The 17 files are `aten/src/ATen/cuda/CUDASparse*`, `CuSparseHandlePool.cpp`,
-    `aten/src/ATen/native/sparse/cuda/{SparseBlas,SparseBlasImpl,SparseBlasLegacy,SparseCUDABlas}*`,
-    `SparseCUDATensorMath.cu`, `SparseMatMul.cu`, `cuSPARSELtOps.{cpp,h}`,
-    `torch/csrc/cuda/shared/cusparselt.cpp` and `torch/backends/cusparselt/__init__.py`.
+    `aten/src/ATen/native/sparse/cuda/`: `SparseBlas.cpp`, `SparseBlasImpl.cpp`,
+    `SparseBlasLegacy.{cpp,h}`, `SparseCUDABlas.cpp`, `SparseCUDATensorMath.cu`, `SparseMatMul.cu`,
+    `cuSPARSELtOps.{cpp,h}`, `torch/csrc/cuda/shared/cusparselt.cpp` and
+    `torch/backends/cusparselt/__init__.py`.
 
 ## 2. Scientific users and SciPy
 
-**What was scanned.** The full Python source of 489 of the 525 scientific projects in the census,
-at the commit the census cites. The other 36 have no GitHub repository (26) or failed to download
-(10). For comparison, a seeded sample of 150 deep-learning projects was scanned (145 succeeded).
-Comments and docstrings were blanked before matching.
+**What was scanned.** The Python source of 489 of the 525 scientific projects in the census, at the
+commit the census cites (19 large repositories were read only up to 400 MB, so their counts are
+lower bounds). The other 36 have no GitHub repository (26) or failed to download (10). For
+comparison, a seeded sample of 150 deep-learning projects was scanned (145 succeeded). Comments and
+docstrings were blanked before matching.
 
 | | scientific (489) | deep-learning sample (145) |
 |---|---|---|
@@ -81,8 +83,8 @@ Comments and docstrings were blanked before matching.
   45, `cg` 28, `splu` 25, `eigs` 17, `svds` 15, `gmres` 15, and fewer of the rest.
 - **Hand check of 6 random files** with both libraries: 5 convert between them, and 1 has a
   project's own `to_sparse` method.
-- **Reading:** in science, torch.sparse is the GPU and torch side of matrices that scipy.sparse
-  builds or solves, not a replacement for scipy.sparse.
+- **Reading** (inferred): in science, torch.sparse is mostly the GPU and torch side of matrices that
+  scipy.sparse builds or solves, not a replacement for scipy.sparse.
 
 ## 3. Where users' voices go
 
@@ -260,7 +262,7 @@ repository.
 
 | Project | Led by | Governance | Commits |
 |---|---|---|---|
-| [DGL](https://github.com/dmlc/dgl) | one organization | none | 608 (2024), 7 (2025), 0 (2026); about 110 a month until 2024-08, near zero from 2024-10 |
+| [DGL](https://github.com/dmlc/dgl) | one organization | none | 608 (2024), 7 (2025), 0 (2026); 107 and 110 in 2024-07 and 2024-08, then 32, 6 and 0 |
 | [MinkowskiEngine](https://github.com/NVIDIA/MinkowskiEngine) | one organization | none | 210 (2020), 8 (2022), 0 (2024–2026); "will not be maintained" ([#624](https://github.com/NVIDIA/MinkowskiEngine/issues/624), 2025) |
 | [MegaBlocks](https://github.com/databricks/megablocks) | one organization | none | 232 (2023), 28 (2024), 8 (2025); archived in 2026 |
 | [stk](https://github.com/stanford-futuredata/stk) | one research group | none | 62 (2023), 0 (2025–2026) |
