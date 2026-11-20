@@ -152,10 +152,11 @@ that depends on pytorch, papers, forums and pytorch issues. Method, tables and l
     slicing of CSR tensors on GPU in single-cell biology ([comment][singlecell]).
 - **Signs of removal.** In 2026, TorchAO removed its sparsity package "due to lack of
   widespread usage of this feature" ([pytorch/ao#4728][ao4728]); torch keeps the
-  semi-structured and BSR kernels it called, and TorchAO keeps a float8 2:4 format in
-  its quantization. This bears on F, which stays an open point (question 5). xformers
-  removed its 2:4 code and points users to torch.sparse. NeMo and PhysicsNeMo dropped
-  their sparse paths in clean-ups.
+  semi-structured kernels it called and the BSR layout and Triton kernel that TorchAO's
+  own copy came from, and TorchAO keeps a float8 2:4 format in its quantization. This
+  bears on F, which stays an open point (question 5). xformers removed its 2:4 code and
+  points users to torch.sparse. NeMo and PhysicsNeMo dropped their sparse paths in
+  clean-ups.
 - **Against linalg and nested tensors.** In equal-size code-search samples, 959 projects
   call sparse and 1,903 call `torch.linalg`; in a sample half that size, 169 call nested
   tensors. Sparse has 1.4× linalg's ATen code and about half its issues and PRs. Sparse
