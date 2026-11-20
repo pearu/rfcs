@@ -24,11 +24,11 @@ All pytorch line numbers below are at commit
   autograd and missing ops. The stories set the new project's priorities, and it keeps
   them current from R0. The direction is targeted development for named users, not broad
   parity.
-- The asks of core, only what the sparse project can't do itself; it writes the
-  PRs: the new repo; review of four stable-ABI pieces; hosting a CI job that builds
-  the package from a commit pin, as for triton; accepting small PRs that let
-  sparse support a new backend. Fallback, if the stable-ABI pieces don't land:
-  the torch-xpu-ops model (G).
+- The asks of core are only what the sparse project can't do itself; it writes the
+  PRs. They are: the new repo; review of four stable-ABI pieces; hosting a CI job that
+  builds the package from a commit pin, as for triton; accepting small PRs that let
+  sparse support a new backend. Fallback, if the stable-ABI pieces don't land: the
+  torch-xpu-ops model (G).
 - No Python name breaks: torch depends on the new package, so `import torch` brings
   `torch.sparse` as today. Four releases (R0–R3, about eight months), plus R4 for the
   last ATen copies.
@@ -62,7 +62,7 @@ All pytorch line numbers below are at commit
 
 **Users next.** The API is beta ([sparse.md:13-15][beta]); semi-structured and
 `torch.masked` are prototype ([sparse.md:72][semi], [masked.md:18-19][masked]). It is
-used: PyG, DGL, TorchAO and `torch_sparse` call it. Public Python files that mention
+used: PyG, DGL and `torch_sparse` call it. Public Python files that mention
 `torch.sparse_coo_tensor`: 29,504; `SparseAdam`: 24,512; `Embedding(` with
 `sparse=True`: 11,968.[^cs] At least 1,798 public projects call it outside their tests,
 1,052 of them maintained ([User stories](#user-stories-r0)). So sparse cannot be
@@ -71,9 +71,11 @@ removed; it can move behind the same names.
 **Why keep and develop torch.sparse.** The user stories ([User stories](#user-stories-r0))
 say who the users are and what they want.
 - **It is used.** At least 1,798 public projects call it, 1,052 of them maintained,
-  and 575 are published packages. That is between a sixth and a half of linalg's use,
-  depending on the measure ([`usage-baseline.md`](RFC-00xx-assets/usage-baseline.md)).
-  The most depended-on users are in both fields: sentence-transformers, torchmetrics,
+  and 575 are published packages. By the measures of
+  [`usage-baseline.md`](RFC-00xx-assets/usage-baseline.md), sparse has between a sixth
+  and a half of linalg's use: about half in equal-size code samples, a third on
+  conda-forge, a sixth by a rough scaling.
+  The highest-ranked users are in both fields: sentence-transformers, torchmetrics,
   peft and PyG in deep learning; POT, linear_operator and cellpose in scientific
   computing. The scientific users are the steadier base: 79 % maintained, against
   49 % in deep learning.
@@ -91,7 +93,7 @@ say who the users are and what they want.
   - sparse solvers, autograd through sparse inputs, and missing ops.
 
   The Sparse Array Consortium is NSF-funded to build a sparse array ecosystem. Its
-  benchmark suite runs PyTorch and densifies where torch.sparse lacks an op (`einsum`,
+  benchmark suite runs PyTorch and works around the ops torch.sparse lacks (`einsum`,
   `where`, logical ops).[^consortium] The gains are measured where data are very sparse
   or structured ([B.4](#b4-when-sparse-pays-off)).
 - **The limits.**
@@ -106,8 +108,8 @@ So the direction is targeted development for named users, not broad parity with
 dense tensors. What core gains:
 - sparse PRs reviewed by owners of their own, not by core;
 - parity PRs decided by those owners against user evidence;
-- a partner for the work outside pytorch: the consortium, whose funded work is to
-  design an ecosystem's governance and roadmap.
+- a possible partner for the work outside pytorch: the consortium, whose funded work is
+  to design an ecosystem's governance and roadmap.
 
 The aim is to keep this work, which users depend on, maintained by owners of its own.
 
@@ -195,7 +197,7 @@ that depends on pytorch, papers, forums and pytorch issues. Method, tables and l
 - **Signs of removal.** In 2026, TorchAO removed its sparsity package "due to lack of
   widespread usage of this feature" ([pytorch/ao#4728][ao4728]); torch keeps the
   semi-structured kernels it called and the BSR layout and Triton kernel that TorchAO's
-  own copy came from, and TorchAO keeps a float8 2:4 format in its quantization. So 2:4
+  own copy came from, and TorchAO keeps float8 2:4 formats in its quantization. So 2:4
   moves with the new project, not to TorchAO (F). xformers removed its 2:4 code and
   points users to torch.sparse. NeMo and PhysicsNeMo dropped their sparse paths in
   clean-ups.
@@ -237,8 +239,8 @@ review, and only what the project cannot do itself:
    package ([A.2](#a2-how-torch-calls-the-package-and-the-hard-cases)). So far this
    concerns only `_to_sparse`.
 
-Nothing is asked of TorchAO. Its float8 2:4 formats call `torch._cslt_compress` and
-`torch._cslt_sparse_mm`
+Nothing is asked of TorchAO. Its float8 2:4 formats run its own CUTLASS kernel or,
+on ROCm, `torch._cslt_compress` and `torch._cslt_sparse_mm`
 ([float8_sparse_2x4_1d_data_1d_metadata_tensor.py:204-215][ao-cslt]), whose
 schemas stay in core, so they keep working through the package.
 
@@ -340,7 +342,7 @@ PRs, and 71 opened or commented on sparse issues.[^community]
 | D | Sparse tests in their own config | nothing | core | saves only CI; needed by A anyway |
 | E | Maintenance mode in core | nothing | core, with a rule to decline parity PRs | bug fixes still need core reviewers; right for now |
 | F | Semi-structured to TorchAO | 2:4 ops and classes | TorchAO | TorchAO removed its sparsity package for lack of use ([pytorch/ao#4728][ao4728]); 2:4 moves with A |
-| G | The torch-xpu-ops model | kernel sources, to a repo pytorch pins and builds in tree | new repo for kernels; core for registrations and pin bumps | close second; the fallback |
+| G | The torch-xpu-ops model | kernel sources, to a repo pytorch pins and builds in tree | new repo for kernels; core for registrations; the sparse project bumps the pin | close second; the fallback |
 
 A against G, in detail: [A.7](#a7-a-against-g).
 
@@ -541,8 +543,8 @@ it.
 | Effort | The four stable-ABI pieces first. | Files move; a pin and a CMake block ([CMakeLists.txt:1266-1336][xpucmake]). |
 | CI | Sparse leaves pytorch's jobs. | Sparse is built in every job. |
 
-G wins on users and effort; A on maintenance. G couples core to sparse for good, and
-its weekly pin needs an owner sparse lacks. XPU's model works because Intel staffs it.
+G wins on users and effort; A on maintenance. G couples core to sparse for good, and its
+weekly pin needs a sparse owner to bump it. XPU's model works because Intel staffs it.
 
 ### A.8 Technical risks
 
@@ -812,8 +814,9 @@ memory traffic dominates.
     "POSE: Phase I: Accelerating the Sparse Array Programming Ecosystem", 2026-08 to 2027-07.
     The [Sparse Array Consortium](https://github.com/SparseArrayConsortium) lists Finch,
     Binsparse, Array API sparse extensions and the Sparse Array Programming Suite, whose
-    PyTorch wrapper densifies sparse operands
-    ([saps_pytorch.py:196, 444](https://github.com/SparseArrayProgrammingSuite/SparseArrayProgrammingSuite/blob/8c62415a87305e23db24f12996f34db73dc74d8a/frameworks/saps_pytorch.py#L196-L197)).
+    PyTorch wrapper works around them
+    ([saps_pytorch.py:196-197](https://github.com/SparseArrayProgrammingSuite/SparseArrayProgrammingSuite/blob/8c62415a87305e23db24f12996f34db73dc74d8a/frameworks/saps_pytorch.py#L196-L197),
+    [444-446](https://github.com/SparseArrayProgrammingSuite/SparseArrayProgrammingSuite/blob/8c62415a87305e23db24f12996f34db73dc74d8a/frameworks/saps_pytorch.py#L444-L446)).
 
 ## Resolution
 We decided to do it. X% of the engineering team actively approved of this change.
