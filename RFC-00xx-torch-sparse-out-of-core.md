@@ -212,16 +212,21 @@ have a record in the code that moves; being listed here is not a commitment:
 Help also comes from the community. In the last 12 months, 67 other people opened sparse
 PRs, and 71 opened or commented on sparse issues.[^community]
 
-**A minimal-effort owner.** The project keeps an owner even when none can give more than
-minimal effort: an owner who stays on or, if none does, core, since torch depends on the
-package (question 2). This is a direction, aimed at keeping the future maintenance
-burden low; how it works is left to when this RFC is implemented, under core's AI policy
-([AI_POLICY.md:29-32][aipol]). The idea is that AI agents help reviewers sort sparse
-issues and PRs into important bug fixes, updates to follow torch, and feature requests
-or changes of direction. The last are declined unless someone decides to pursue them.
-Example ideas: agents prepare simple, localized fixes that a reviewer answers for, and
-leave existing tests unchanged. With no fixes landing, a stable-ABI wheel keeps working
-with later torch releases, as torchaudio's does ([Prior Art](#prior-art)).
+**Periods of minimal effort.** The aim is a sustainable project with active owners.
+There may still be periods when no owner can give more than minimal effort. The project
+then keeps a minimal-effort owner: an owner who stays on or, if none does, core
+(question 2). Core is the natural candidate, since torch depends on the package. Such a
+period keeps the package healthy until community interest or a new owner brings it back
+to active development. How it works is left to when this RFC is implemented, under
+core's AI policy ([AI_POLICY.md:29-32][aipol]). With an LLM, a hole in torch.sparse is
+cheap to fill ([Motivation](#motivation)); the idea is to make sorting cheap too. AI
+agents help reviewers sort sparse issues and PRs into important bug fixes, updates to
+follow torch, and feature requests or changes of direction. The last wait for an owner
+who commits, as the maintenance policy asks ([The maintenance
+policy](#the-maintenance-policy)). For example, agents could prepare simple, localized
+fixes that a reviewer answers for, and leave existing tests unchanged. With no fixes
+landing, a stable-ABI wheel keeps working with later torch releases, as torchaudio's
+does ([Prior Art](#prior-art)).
 
 If no owner has committed by R0, nothing moves. That is a sound end state, not a
 failure, and the question can be reopened when owners come forward.
