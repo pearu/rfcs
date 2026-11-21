@@ -68,8 +68,9 @@ How the move works is in the appendix,
 - The same question blocks wanted work.
   [pytorch#201801](https://github.com/pytorch/pytorch/pull/201801) (open since
   2026-10-23) adds the CSR/BSR constructor on MPS, a first step toward CSR on MPS for a
-  downstream library. A core reviewer asked who would maintain MPS
-  sparse parity; the sparse reviewer could not commit to it.[^201801]
+  downstream library. A core reviewer asked who would maintain MPS sparse parity; the
+  sparse reviewer had not signed up for it: it was beyond what they could cover with the
+  time they have.[^201801]
 
 **It cannot be removed, and it is worth keeping.** At least 1,798 public projects call
 torch.sparse outside their tests; 1,052 of them are maintained, and 575 are published on
