@@ -32,10 +32,11 @@ This RFC proposes two steps. The second is taken only if owners commit.
   tensors. The bar of step 1 stays; the project applies it, and core takes part where a
   decision means notable changes to core, as a new backend does.
 - **What it costs.** The project writes the PRs and runs its own CI. Core creates the
-  repo, reviews a few small core changes, four additions to the stable ABI among them,
-  approves the core-side lines of about 100 deletion PRs, and hosts one CI build job
-  during the move. If those four can't land, the fallback is a kernel repo that pytorch
-  builds in tree, as for XPU. Distributions that package torch build one more package.
+  repo, hosts one CI build job during the move, and approves the core-side lines of
+  about 100 deletion PRs. It reviews a few small core changes, four additions to the
+  stable ABI among them; if those four can't land, the fallback is a kernel repo that
+  pytorch builds in tree, as for XPU. Distributions that package torch build one more
+  package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
   Every release is a safe place to stop.
 - **Why not less.** Moving only new backends out of tree leaves ~26 k lines of CPU and
@@ -291,8 +292,9 @@ move.
 with sparse kernels under dense keys, the 2:4 ops among them.[^families] Each takes
 three PRs: one in the new repo, and two in pytorch, a commit-pin bump and, a release
 later, the deletion of its ATen copy. Sparse owners approve the sparse-only files, the
-commit pin among them; a core reviewer approves a deletion's changes to shared files, a
-few deleted lines each ([A.4](#a4-what-core-adds)).
+commit pin among them; a core reviewer approves a deletion's changes to shared files: a
+few dispatch lines each and, for 18 families, the removal of a kernel's source
+([A.4](#a4-what-core-adds)).
 
 **Why four releases, and a fifth to clean up.** No Python name breaks, so the pace is
 set by the work, not by deprecation: R1 is mechanical, R2–R3 carry the kernels.
