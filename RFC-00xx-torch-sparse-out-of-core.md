@@ -370,7 +370,7 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 | Risk or cost | If it happens |
 |---|---|
 | No owner for the sparse project | Nothing moves ([Owners and governance](#owners-and-governance)). |
-| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on, under a minimal-effort owner: an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
+| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on. The minimal-effort owner is an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
 | Work stalls or plans change (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a commit pin, on every platform. The release order of [A.1](#a1-how-the-package-reaches-torch) is untested, and so is conda. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
