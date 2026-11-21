@@ -33,10 +33,10 @@ This RFC proposes two steps. The second is taken only if owners commit.
   decision means notable changes to core, as a new backend does.
 - **What it costs.** The project writes the PRs and runs its own CI. Core creates the
   repo, hosts one CI build job during the move, and approves the core-side lines of
-  about 100 deletion PRs. It reviews a few small core changes, four additions to the
-  stable ABI among them. If those four can't land, the fallback is a kernel repo that
-  pytorch builds in tree, as for XPU. Distributions that package torch build one more
-  package.
+  about 100 PRs that delete core's copies of moved kernels. It reviews a few small core
+  changes, four additions to the stable ABI among them. If those four can't land, the
+  fallback is a kernel repo that pytorch builds in tree, as for XPU. Distributions that
+  package torch build one more package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
   Every release is a safe place to stop.
 - **Why not less.** Moving only new backends out of tree leaves ~26 k lines of CPU and
@@ -131,7 +131,7 @@ change lies outside the code sparse maintainers own: registering a sparse kernel
 8 of them for MPS or XPU).[^prfiles] For such changes it is hard to find a core reviewer
 with the interest or the expertise to approve them. Owners with a package of their own
 resolve much of this: they review and approve, decide what to add, and test the backends
-they choose. The move's first step gives them that for the Python code, still inside
+they choose. The move starts by giving them that for the Python code, still inside
 pytorch/pytorch. Once kernels move, a kernel registers from the package, and
 `native_functions.yaml` doesn't change.
 
@@ -145,28 +145,37 @@ runner hours of test jobs on sparse tests, 1.6 %.[^ci] Saving it is a side effec
 ## **Proposed Implementation**
 
 **Terms.**
-- *The sparse project*: the owners of torch.sparse and their repo,
-  `pytorch/sparsetorch`.
-- *The package*: `sparsetorch`, which torch depends on; inside the torch wheel at R1,
-  a wheel of its own from R2.
-- *Options A–G*, from [Alternatives](#alternatives): the proposal is A, reached through
-  C, with D and E at once; G is the fallback.
-- *R0–R4*: R0 is the first pytorch release after this RFC is accepted; R1–R4 follow,
-  about two months apart.
 - *A family*: an op with all its variants (functional, in-place, `out=`), the unit that
   moves.
-- *The switch*: an environment variable that brings ATen's copies back
-  ([A.1](#a1-how-the-package-reaches-torch)).
-- *A commit pin*: the package commit that pytorch CI builds, as for `triton`.
+- *The sparse project*: the owners of torch.sparse and their repo,
+  `pytorch/sparsetorch`.
+- *The package*: `sparsetorch`, which torch depends on.
 - *The stable ABI*: pytorch's versioned C interface that lets an extension built for one
   torch release run with later ones.
+- *A commit pin*: the package commit that pytorch CI builds, as it does for `triton`.
+- *The switch*: an environment variable that makes torch use core's copies of moved
+  kernels again, while those copies exist ([A.1](#a1-how-the-package-reaches-torch)).
+- *The releases*, about two months apart ([The migration](#the-migration)):
+  - *R0*, the first pytorch release after this RFC is accepted: the policy and the
+    sparse test config land, and owners are decided. Nothing moves.
+  - *R1*: the Python code moves into a package inside pytorch/pytorch.
+  - *R2*: the package gets its own repo and wheel, and kernels start to move. Core keeps
+    its copies behind the switch.
+  - *R3*: the rest of the kernels move. Core's copies of R2's kernels are deleted, and
+    the sparse tests leave pytorch CI.
+  - *R4*: core's last copies are deleted.
+- *The options*, from [Alternatives](#alternatives): the proposal is A, a separate
+  project. It is reached through C, an in-repo package for the Python code, with D, a
+  test config for sparse, and E, the maintenance policy, at once. G, a kernel repo that
+  pytorch builds in tree, is the fallback.
 
 ### Owners and governance
 
-The RFC can be accepted for the maintenance policy and the test config alone. The
-move, R1 on, starts only with an ownership commitment: named people who commit to own
-the sparse project, review its PRs and drive its direction, and a rule for who breaks
-ties on design decisions (question 2). The bar was stated in public before this RFC:
+The RFC can be accepted for [the maintenance policy](#the-maintenance-policy) and the
+test config alone. The move starts only with an ownership commitment: named people who
+commit to own the sparse project, review its PRs and drive its direction, and a rule for
+who breaks ties on design decisions ([question 2](#unresolved-questions)). The bar
+was stated in public before this RFC:
 "I would like to see that there are individuals who are interested in doing the work,
 and maintaining it long term."[^112849]
 
@@ -231,7 +240,7 @@ example, agents could prepare simple, localized fixes that a reviewer answers fo
 leave existing tests unchanged. With no fixes landing, a stable-ABI wheel keeps working
 with later torch releases, as torchaudio's does ([Prior Art](#prior-art)).
 
-If no owner has committed by R0, nothing moves. That is a sound end state, not a
+If no owner has committed by [R0], nothing moves. That is a sound end state, not a
 failure, and the question can be reopened when owners come forward.
 
 ### Vision
@@ -253,12 +262,12 @@ ones. So core keeps the schemas of general-purpose ops, with their autograd form
 and the sparse project registers kernels for them. It owns the schemas of
 sparse-specific ops only: new sparse-only ops, defined outside core, and later the
 existing ones (`torch.sparse.*`, the sparse factories, `to_sparse_*`). That is a
-direction after the move, not part of R0–R3.
+direction for after the move, not part of it.
 
-**Design decisions,** for the design document the new repo starts with (R0):
-- Unspecified elements are zero. The ops that treat unspecified elements as missing,
-  not as zero (such as `torch.sparse.softmax` and `torch.sparse.log_softmax`), keep
-  that meaning.
+**Design decisions,** for the design document the new repo starts with:
+- Unspecified elements are zero. The masked-semantics ops, which treat unspecified
+  elements as missing, not as zero (such as `torch.sparse.softmax` and
+  `torch.sparse.log_softmax`), keep that meaning.
 - No implicit conversion. An op without a kernel for a layout raises; it does not
   convert to dense or to another layout. Conversion is expensive, and it hides the
   missing fast kernel.
@@ -278,19 +287,20 @@ autograd through sparse inputs, missing ops (39 Array API functions fit zero sem
 and are missing, [B.8](#b8-torchsparse-beside-other-sparse-libraries)), and SciPy
 interop. Backends are added by the project's bar: a project that asks, and an owner. A
 new backend needs changes to core's keys and code generation, small but notable
-([A.5](#a5-new-backends-the-core-pieces)), so core takes part in that decision (ask 4).
+([A.5](#a5-new-backends-the-core-pieces)), so core takes part in that decision
+([ask 4](#the-asks-of-core)).
 
 ### The maintenance policy
 
 Core no longer develops torch.sparse; this is already the practice
 ([Motivation](#motivation)). This proposal writes it down as the maintenance policy
-(E), from R0, in `sparse.md` and CONTRIBUTING:
+(E), from [R0], in `sparse.md` and CONTRIBUTING:
 - bug fixes are reviewed as today;
 - new ops and new backends land only with user demand and an owner who commits to
   maintain them;
 - new features belong in the sparse project, once it exists, not in core.
 
-From R0, the sparse tests also run in a CI config of their own, `sparse` (D).
+From [R0], the sparse tests also run in a CI config of their own, `sparse` (D).
 
 ### The migration
 
@@ -301,7 +311,7 @@ move.
 
 | Release | What changes | How the package ships |
 |---|---|---|
-| **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Owners and governance are decided (question 2); without an owner, the plan stops here. User stories are recounted. The new repo gets its owners and a design document. | — |
+| **R0** | E: the policy in `sparse.md` and CONTRIBUTING. D: a `sparse` test config. Owners and governance are decided ([question 2](#unresolved-questions)); without an owner, the plan stops here. User stories are recounted. The new repo gets its owners and a design document. | — |
 | **R1** | C: `torch/sparse/*`, `SparseAdam` and `sparse_adam` move into the in-repo package `sparsetorch`, laid out as the new repo. Their names in torch re-export it ([A.1](#a1-how-the-package-reaches-torch)). | inside the torch wheel |
 | **R2** | The package moves to the new repo. Kernels move, one family per PR: the package's kernels take over from ATen's. ATen's copy stays, frozen, behind the switch. It is deleted only after a release in which the package's kernel shipped and passed the sparse tests. The package builds on the stable ABI and loads through a `torch.backends` entry point. | its own wheel, required `==`, built by pytorch CI from a commit pin |
 | **R3** | The rest, the 14 MPS-only kernels among them. ATen copies of R2's families deleted. Sparse test files leave pytorch CI. | its own wheel, required `>=` |
@@ -339,18 +349,20 @@ and `SparseAdam`.
 The sparse project writes every core PR this plan needs. What it asks of core is
 review, and only what the project cannot do itself:
 1. **A new repo**, `pytorch/sparsetorch`, for the owners, under the governance above
-   (question 2).
-2. **Review of four stable-ABI pieces in R1.** The pieces: `Scalar`, accessors and a
+   ([question 2](#unresolved-questions)).
+2. **Review of four stable-ABI pieces in [R1].** The pieces: `Scalar`, accessors and a
    setter for a sparse tensor's parts, the current cuSPARSE handle, and typed exceptions
-   ([A.4](#a4-what-core-adds), question 6). Without them, the fallback is G (question
-   7).
-3. **A CI job that builds the package from a commit pin** during R2–R3, as for triton
-   ([A.1](#a1-how-the-package-reaches-torch), question 4). The sparse project writes
-   and maintains it; core hosts it.
+   ([A.4](#a4-what-core-adds), question 6). Without them, the fallback is a kernel repo
+   that pytorch builds in tree (G, question 7).
+3. **A CI job that builds the package from a commit pin** during [R2]–[R3], as for
+   triton ([A.1](#a1-how-the-package-reaches-torch), question 4). The sparse project
+   writes and maintains it; core hosts it.
 4. **Small core PRs for new backends**, with no kernel code in them
    ([A.5](#a5-new-backends-the-core-pieces)). Core accepts such PRs when their only
    purpose is to let the sparse project support a backend (question 3). One of them
-   gives the generic sparse kernels to any backend key, which B and G need too.
+   registers the device-generic sparse kernels, which are most sparse kernels, for any
+   backend's sparse keys. Moving only new backends out (B) and the in-tree kernel repo
+   (G) need it too.
 
 Beyond these four, the asks are review of the smaller core changes listed in
 [A.4](#a4-what-core-adds), and of the core-side part of each deletion PR ([The
@@ -359,11 +371,11 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 ## **Metrics**
 
 - Sparse PRs and reviews reaching core reviewers: should drop to the part kept in core.
-- User stories behind the priorities: every op added to the stable namespace after R0,
+- User stories behind the priorities: every op added to the stable namespace after [R0],
   and every new backend, cites at least one actively maintained public project that
   needs it. Stories are recounted at each release, by layout and device, with the method
   of [B.1](#b1-method), against this RFC's count: 1,798 projects, 1,052 maintained.
-- Sparse share of pytorch CI time: from 1.6 % towards zero after R3.
+- Sparse share of pytorch CI time: from 1.6 % towards zero after [R3].
 - The 122 sparse tests in core's other test files (autograd, serialization,
   distributed, …): with the package, today's results; without it, a test that reaches
   a moved kernel is skipped, and the rest pass.
@@ -373,13 +385,13 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 | Risk or cost | If it happens |
 |---|---|
 | No owner for the sparse project | Nothing moves ([Owners and governance](#owners-and-governance)). |
-| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on. Until new owners come forward, the minimal-effort owner is an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
-| Work stalls or plans change (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
+| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on. Until new owners come forward, the minimal-effort owner is an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), [question 2](#unresolved-questions)). The code moved verbatim, so the move can be reversed the same way. |
+| Work stalls or plans change while kernels move (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a commit pin, on every platform. The release order of [A.1](#a1-how-the-package-reaches-torch) is untested, and so is conda. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
-| The four stable-ABI pieces don't land | Fall back to G. Or move kernels through the Python route ([A.9](#a9-evidence-kernel-families-moved)), at its cost per call. |
-| Kernels get slower | `addmm` costs the same on CUDA at nnz 10⁶. `mul` was 1.3–4.6× slower: an extra copy, a dispatcher call per metadata read and, on CUDA, a detour around a kernel the experiment left in core. Accessors and a setter, piece (2), are expected to remove most of it, and that kernel moves with `mul`; not measured yet ([A.9](#a9-evidence-kernel-families-moved)). |
-| Distributions that package torch must package `sparsetorch` too, from R2 | It builds against torch with the same compilers and CUDA libraries. Until R2, nothing changes for them. |
+| The four stable-ABI pieces don't land | Fall back to the in-tree kernel repo (G). Or register kernels from Python (`torch.library`, [A.9](#a9-evidence-kernel-families-moved)), at its cost per call. |
+| Kernels get slower | `addmm` costs the same on CUDA at nnz 10⁶. `mul` was 1.3–4.6× slower: an extra copy, a dispatcher call per metadata read and, on CUDA, a detour around a kernel the experiment left in core. Accessors and a setter, one of the four stable-ABI pieces, are expected to remove most of it, and that kernel moves with `mul`; not measured yet ([A.9](#a9-evidence-kernel-families-moved)). |
+| Distributions that package torch must package `sparsetorch` too, from R2, when the package gets a wheel of its own | It builds against torch with the same compilers and CUDA libraries. Until R2, nothing changes for them. |
 
 Not a breaking change for Python users: saved files, exported programs and compiled
 models keep loading ([A.2](#a2-how-torch-calls-the-package-and-the-hard-cases)). A C++
@@ -395,31 +407,31 @@ if C++ users need them.
 | 0+ | New sparse maintainers in core | nothing | the new maintainers, and core for shared files | rejected: every new op and backend stays core's to test and keep |
 | **A** | Separate project | kernels and Python ([What stays in core](#what-stays-in-core)) | the sparse project's owners | **the destination** |
 | B | Core keeps the five layouts; other backends as plugins | the 14 MPS-only kernels, and later backends | core, for CPU/CUDA | rejected: ~26 k lines of CPU/CUDA code and its PRs stay in core with no owner |
-| C | The functorch path | Python, into an in-repo package | core | the first step (R1) |
+| C | The functorch path | Python, into an in-repo package | core | the move's first release (R1) |
 | D | Sparse tests in their own config | nothing | core | at once (R0) |
 | E | The maintenance policy | nothing | core | at once (R0); the end state if no owner commits |
 | F | Semi-structured to TorchAO | 2:4 ops and classes | TorchAO | rejected: TorchAO removed its sparsity package for lack of use ([pytorch/ao#4728][ao4728]); 2:4 moves with A |
 | G | The torch-xpu-ops model | kernel sources, to a repo pytorch pins and builds in tree | the new repo for kernels; core for registrations; the sparse project bumps the commit pin | the fallback: every new op or backend still needs a core PR, and the commit pin a bump about weekly; no packaging change ([A.7](#a7-a-against-g)) |
 
 **Why not B alone.** B settles the question for new hardware only; solvers, missing ops,
-autograd kernels and SciPy interop are not hardware. B's one core change
-([A.5](#a5-new-backends-the-core-pieces)) is asked for here too. A new backend means
-notable changes to core, so core takes part in discussing and reviewing it ([Owners and
-governance](#owners-and-governance)); once core approves it, the core changes it needs
-can land (ask 4).
+autograd kernels and SciPy interop are not hardware. The one core change that B needs,
+generic kernels for any backend ([A.5](#a5-new-backends-the-core-pieces)), is asked for
+here too. A new backend means notable changes to core, so core takes part in discussing
+and reviewing it ([Owners and governance](#owners-and-governance)); once core approves
+it, the core changes it needs can land ([ask 4](#the-asks-of-core)).
 
 ## **Prior Art**
 
 - **functorch** moved the other way: a separate repo merged into pytorch. `functorch`
   is now an alias over `torch._functorch` ([functorch/\_\_init\_\_.py:6-7][ft]), the
-  route R1 uses.
+  route [R1] uses.
 - **torchaudio**: a maintenance phase, and a stable-ABI wheel that works with later
   torch releases.
 - **TorchAO** builds stable-ABI modules with `TORCH_TARGET_VERSION`.
 - **triton**: a pinned dependency of torch, built by pytorch CI.
 - **torch-xpu-ops**: option G.
 - **`torch.backends` entry points**, [pytorch#122468](https://github.com/pytorch/pytorch/issues/122468),
-  made for out-of-tree devices ([torch/\_\_init\_\_.py:3531-3546][autoload]); R2 loads
+  made for out-of-tree devices ([torch/\_\_init\_\_.py:3531-3546][autoload]); [R2] loads
   the kernels this way.
 - **RFC-0050**: cross-repository CI for out-of-tree backends.
 
@@ -437,34 +449,36 @@ can land (ask 4).
 The first readers are malfet and amjames; the Ask lines name who else can answer each
 question.
 
-1. Is A, through C, the direction you'd back, given that torch keeps
-   depending on the package?\
+1. Is a separate project (A), reached through an in-repo package for the Python code
+   (C), the direction you'd back, given that torch keeps depending on the package?\
    Ask: albanD, malfet
 2. Governance of the sparse project: who owns it, and who breaks ties on design
    decisions? While there is a single owner, will core reviewers take part in
    architecture review ([Owners and governance](#owners-and-governance))? Can pytorch's
    automated reviewer run on the new repo too? If no owner stays on, would core be the
-   minimal-effort owner, under its own AI policy? Decided at R0.\
+   minimal-effort owner, under its own AI policy? Decided at [R0].\
    Ask: albanD, malfet
-3. Will core accept the small core PRs that a new sparse backend needs (ask 4)?\
+3. Will core accept the small core PRs that a new sparse backend needs
+   ([ask 4](#the-asks-of-core))?\
    Ask: malfet, EikanWang
 4. Will pytorch CI host a job, written and maintained by the sparse project, that builds
-   the package from a commit pin during R2–R3, on every platform torch ships?\
+   the package from a commit pin during [R2]–[R3], on every platform torch ships?\
    Ask: atalman, malfet
-5. Is four releases the right pace, or should R2 and R3 be one?\
+5. Is four releases the right pace, or should the two releases in which kernels move,
+   R2 and R3, be one?\
    Ask: malfet
-6. Will core review the four stable-ABI pieces ([A.4](#a4-what-core-adds)) in R1,
+6. Will core review the four stable-ABI pieces ([A.4](#a4-what-core-adds)) in [R1],
    written by the sparse project?\
    Ask: janeyx99; for the cuSPARSE handle, also eqy
-7. If not, would core take G for sparse, as for XPU, with the sparse project bumping the
-   commit pin?\
+7. If not, would core take the torch-xpu-ops model (G) for sparse, with the sparse
+   project bumping the commit pin?\
    Ask: malfet, EikanWang
-8. The XPU maintainers ([merge_rules.yaml:552-563][xpumr]): under A, would you run the
-   package's shared test suite on XPU, and register XPU's 28 sparse kernels and 4
-   dispatch stubs through the package's documented interface ([A.6](#a6-xpu-and-mps)),
-   each project bumping its own commit pin in pytorch?\
+8. The XPU maintainers ([merge_rules.yaml:552-563][xpumr]): under this proposal, would
+   you run the package's shared test suite on XPU, and register XPU's 28 sparse kernels
+   and 4 dispatch stubs through the package's documented interface
+   ([A.6](#a6-xpu-and-mps)), each project bumping its own commit pin in pytorch?\
    Ask: EikanWang, guangyey
-9. Where does the package's CI run after R3, and who funds its GPU and macOS runners?
+9. Where does the package's CI run after [R3], and who funds its GPU and macOS runners?
    Sparse tests are a small share of CI, so pytorch's runners, on demand rather than on
    every PR, may do. MPS needs an owner with a particular interest in it.\
    Ask: atalman, malfet
@@ -518,7 +532,7 @@ none: the `Tensor` methods, `torch.sparse_*_tensor`, `Embedding(sparse=True)` an
 |---|---|
 | c10d sparse allreduce ([Ops.cpp:795-801][ops]) | Stays in core. It needs `ProcessGroup` and the Gloo backend, which the stable ABI doesn't reach. |
 | Autograd | Formulas belong to the op and stay with the schemas; sparse work inside them moves as kernels; masked-semantics ops keep their meaning. |
-| Package absent after a deletion | Each deleted kernel leaves a placeholder kernel in ATen, generated (the experiments call it a stub), that says "install `sparsetorch`". A backend fallback would not do: composite kernels run ahead of it (37 ops, plus 53 `structured_delegate` ops on the compressed layouts), it doesn't cover dense keys, and it would claim ops that never moved. The package overrides the placeholders, so the dispatcher's override warning must be silent for them. |
+| Package absent after a deletion | Each deleted kernel leaves a placeholder kernel in ATen, generated (the experiments call it a stub; it is not one of the dispatch stubs of [A.5](#a5-new-backends-the-core-pieces)), that says "install `sparsetorch`". A backend fallback would not do: composite kernels run ahead of it (37 ops, plus 53 `structured_delegate` ops on the compressed layouts), it doesn't cover dense keys, and it would claim ops that never moved. The package overrides the placeholders, so the dispatcher's override warning must be silent for them. |
 | Dense-to-sparse conversions ([native_functions.yaml:7585][nf-tosparse]) | One family. The package registers it under the dense keys too, and its placeholders cover the dense keys. |
 | MPS kernels | Ported to the stable ABI's Metal shim ([shim_mps.h:20-101][shim-mps]). This route is untested. ATen's copy stays behind the switch until a macOS runner tests the port. |
 | MKL and cuSPARSE | cuSPARSE through the stable ABI (R1). For MKL, the package's owners choose between torch exposing its MKL sparse calls through the stable ABI and their own CPU kernels. |
@@ -1035,6 +1049,11 @@ Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
 
 To be filled in after the discussion.
 
+[R0]: #the-migration "R0: the policy and the sparse test config land; owners are decided"
+[R1]: #the-migration "R1: the Python code moves into a package inside pytorch/pytorch"
+[R2]: #the-migration "R2: the package gets its own repo and wheel; kernels start to move"
+[R3]: #the-migration "R3: the rest of the kernels move; core's copies of R2's are deleted"
+[R4]: #the-migration "R4: core's last copies are deleted"
 [readme]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/README.md?plain=1#L9-L11
 [poi]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/docs/source/community/persons_of_interest.md?plain=1#L150-L156
 [mr]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/.github/merge_rules.yaml#L159-L180
