@@ -32,7 +32,7 @@ This RFC proposes two steps. The second is taken only if owners commit.
   tensors. The bar of step 1 stays; the project applies it, and core takes part where a
   decision means notable changes to core, as a new backend does.
 - **What it costs.** The project writes the PRs and runs its own CI. Core creates the
-  repo and, during the move, builds the package from a commit pin in each of its
+  repo and, during the move, builds the package at a pinned commit in each of its
   existing build jobs. It approves the core-side lines of about 100 PRs that delete
   core's copies of moved kernels. It reviews a few small core changes, four additions to
   the stable ABI among them. If those four can't land, the fallback is a kernel repo
@@ -154,8 +154,9 @@ runner hours of test jobs on sparse tests, 1.6 %.[^ci] Saving it is a side effec
 - *The stable ABI*: pytorch's versioned C interface that lets an extension built for one
   torch release run with later ones.
 - *A commit pin*: the package commit that pytorch CI uses, as it does for `triton`. It
-  builds the package from it during the move, and runs the package's tests from it
-  after.
+  builds the package from it during the move. After the move it would run the package's
+  tests from it on some pytorch PRs, if core agrees
+  ([question 10](#unresolved-questions)).
 - *The switch*: an environment variable that makes torch use core's copies of moved
   kernels again, while those copies exist ([A.1](#a1-how-the-package-reaches-torch)).
 - *The releases*, about two months apart ([The migration](#the-migration)):
@@ -371,7 +372,7 @@ review, and only what the project cannot do itself:
 Beyond these four, the asks are review of the smaller core changes listed in
 [A.4](#a4-what-core-adds), and of the core-side part of each deletion PR ([The
 migration](#the-migration)). Nothing is asked of TorchAO (A.4). A possible further ask,
-after R3, is a light check that runs the package's tests, from its commit pin, on the
+after [R3], is a light check that runs the package's tests, from its commit pin, on the
 pytorch PRs that touch what sparse relies on (question 10).
 
 ## **Metrics**
@@ -382,7 +383,7 @@ pytorch PRs that touch what sparse relies on (question 10).
   needs it. Stories are recounted at each release, by layout and device, with the method
   of [B.1](#b1-method), against this RFC's count: 1,798 projects, 1,052 maintained.
 - Sparse share of pytorch CI time: from 1.6 % towards zero after [R3].
-- The 122 sparse tests in core's other test files (autograd, serialization,
+- The sparse tests in core's other test files, about 200 (autograd, serialization,
   distributed, …): with the package, today's results; without it, a test that reaches
   a moved kernel is skipped, and the rest pass.
 
@@ -494,10 +495,10 @@ question.
    needs an owner with a particular interest in it.\
    Ask: atalman, malfet
 10. Before a torch PR lands: about 60 pytorch PRs a month touch what sparse relies on.
-   Would core run the package's tests on them in the `sparse` workflow, started by a
+   Would core run the package's tests on them in a `sparse` workflow, started by a
    `ciflow/sparse` label applied by path, as it does for torchtitan? That is about
-   165–245 runner-hours a month on CUDA ([A.10](#a10-the-packages-ci),
-   estimates). The sparse project keeps the commit pin and bumps it.\
+   160–240 runner-hours a month, with a CUDA test job ([A.10](#a10-the-packages-ci),
+   estimates). The sparse project would keep the commit pin and bump it.\
    Ask: atalman, malfet
 
 **Out of scope, for later:** making the package an optional install; replacing the
@@ -603,7 +604,7 @@ wrong result (see [A.9](#a9-evidence-kernel-families-moved)).
 
 | Release | Core adds |
 |---|---|
-| R0 | the `sparse` test config; a marker for the 122 sparse tests in core test files |
+| R0 | the `sparse` test config; a marker for the sparse tests in core's other test files, about 200 |
 | R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS for the package. The rule covers the sparse-only files, the commit-pin file among them, as the XPU rule covers `third_party/xpu.txt` ([merge_rules.yaml:552-563][xpumr]), and sparse owners approve changes to them. A deletion PR also changes files the rule doesn't cover, so a core reviewer approves those parts: `native_functions.yaml`, which core reviews anyway; files shared with dense code, where 18 of the 100 families have a kernel[^families] (`TensorShape.cpp`, `TensorConversions.cpp`, `ReduceOps.cpp` and four more); and `build_variables.bzl`, which names the sparse sources one by one ([build_variables.bzl:1574-1587][bv]). **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops (in progress: [pytorch#203903](https://github.com/pytorch/pytorch/pull/203903), a draft); (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle; (4) typed exceptions: today a stable kernel's `IndexError` reaches Python as `RuntimeError`, though its message arrives ([pytorch#180135](https://github.com/pytorch/pytorch/pull/180135)).** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
 | R2 | a step in each CI build job that builds the package from a commit pin, and the dependency in the wheel requirements; a placeholder kernel, generated for each deleted sparse kernel, that says "install `sparsetorch`", and no override warning when the package replaces a placeholder ([OperatorEntry.cpp:213-225][override-warn]); AOTInductor C shims that call the dispatcher for moved ops, with their headers unchanged ([gen_aoti_c_shim.py:458-482][aoti-gen]); a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
 | R3 | an extension point through which the package provides `Adagrad`'s step for sparse gradients, sparse code now in core's `torch/optim/adagrad.py` |
@@ -675,7 +676,7 @@ Under A, the two projects share:
 
 | | A | G |
 |---|---|---|
-| Maintenance | Sparse PRs leave core. Coupling is through the aten schemas the package calls (~30 for the two families moved), which change under BC rules. A commit pin in CI: for the build during R2–R3, then only for the torch-side check ([A.10](#a10-the-packages-ci)). | Registrations stay in core: a new op or backend needs a core PR. Internal ATen changes can break the sparse repo. A commit pin to bump about weekly: XPU's moved 61 times in 12 months, with 3 reverts.[^xpu] |
+| Maintenance | Sparse PRs leave core. Coupling is through the aten schemas the package calls (~30 for the two families moved), which change under BC rules. A commit pin in CI: for the build during R2–R3, then only for the torch-side check, if core takes it ([A.10](#a10-the-packages-ci)). | Registrations stay in core: a new op or backend needs a core PR. Internal ATen changes can break the sparse repo. A commit pin to bump about weekly: XPU's moved 61 times in 12 months, with 3 reverts.[^xpu] |
 | Users | No Python name breaks. Risks: a dependency cycle; a broken package breaks `import torch`. | No change. |
 | Effort | The four stable-ABI pieces first. | Files move; a pin and a CMake block ([CMakeLists.txt:1266-1336][xpucmake]). |
 | CI | Built in every job during R2–R3; after R3, sparse leaves pytorch's jobs ([A.10](#a10-the-packages-ci)). | Sparse is built in every job. |
@@ -691,7 +692,7 @@ ones.
 
 | Risk | If it happens |
 |---|---|
-| Hidden sparse paths in core (259 files mention sparse) | Found only by the 122 core sparse tests run without the package. |
+| Hidden sparse paths in core (259 files mention sparse) | Found only by core's other sparse tests, about 200, run without the package. |
 | `TORCH_DEVICE_BACKEND_AUTOLOAD=0` turns sparse kernels off too | Sparse gets an import-time hook of its own. |
 
 ### A.9 Evidence: kernel families moved
@@ -759,15 +760,23 @@ During R2–R3, each of pytorch's build jobs builds the package from its commit 
 torch, and the sparse tests stay in pytorch CI. ATen's copies are still compiled until
 they are deleted, so the added time is the package's own build. Its sparse sources take
 about 3 CPU-minutes, plus 6 per CUDA architecture, and a compiler cache serves them
-until the pin moves (estimate).
+until the pin or the stable-ABI headers change (estimate).
 
-After R3 the package's own CI builds and tests it. It runs the 7 sparse test files and
-the sparse tests of other components. 215 test functions in pytorch's other test files
-build or pass sparse tensors: autograd, optim, fake tensor, serialization, inductor,
-dynamo, functorch, distributed and others. They stay in their files and run in pytorch
-CI as today, and the package's CI runs them against the package too. The package is
-`abi3` and built on the stable ABI. So one build serves every Python version and every
-supported torch release, and a run against another torch is a test job only.
+The package's own CI builds and tests it from R2 on
+([A.1](#a1-how-the-package-reaches-torch)). From R2 it runs the minimal set below, while
+pytorch CI still runs the sparse tests, so they run twice until R3. After R3 it runs the
+5 sparse test files, which have left pytorch CI, and the tests of what stays in core
+that use sparse tensors:
+- the two `torch.masked` test files, which stay in core with `torch.masked`
+  ([A.3](#a3-what-stays-in-core-and-why));
+- about 200 test functions in pytorch's other test files that build or pass sparse
+  tensors: autograd, optim, fake tensor, serialization, inductor, dynamo, functorch,
+  distributed and others.
+
+Those stay in their files and run in pytorch CI as today, and the package's CI runs them
+against the package too. The package is `abi3` and built on the stable ABI. So one build
+serves every Python version and every supported torch release, and a run against another
+torch is a test job only.
 
 The configurations follow the platform code in the sparse sources:
 - MKL's sparse BLAS and its fallbacks ([Sparse.h:5-9][mklsp]);
@@ -779,29 +788,30 @@ The configurations follow the platform code in the sparse sources:
 - ROCm.
 
 XPU's kernels are torch-xpu-ops' ([A.6](#a6-xpu-and-mps)). PR and nightly runs test
-against torch nightly. The weekly and release runs test against the supported torch
-releases, to check that a package update runs with each of them.
+against torch nightly. The weekly and release runs test against the torch releases the
+package supports (taken as 4), to check that a package update runs with each of them.
 
-| | Configuration | Sparse test files, h per run (E: estimate) | Minimal set | Ideal set |
+| | Configuration | The 5 sparse test files, h per run (E: estimate) | Minimal set | Ideal set |
 |---|---|---|---|---|
-| 1 | Linux x86 CPU, with MKL | 0.24 | each PR, newest Python; nightly, oldest Python; weekly, oldest and latest torch | each PR; nightly, two more Pythons; weekly, each supported torch |
-| 2 | Linux x86 CPU, without MKL | 0.24 E | nightly | nightly |
-| 3 | Linux x86 CUDA, compute capability 8.x, with cuDSS | 0.72 | each PR; weekly, oldest and latest torch | each PR; nightly, the oldest and newest CUDA; weekly, each supported torch |
-| 4 | Linux aarch64 CPU | 0.29 | nightly | nightly |
-| 5 | Linux aarch64 CUDA | 0.72 E | nightly, build only | nightly |
+| 1 | Linux x86 CPU, with MKL | 0.23 | each PR, newest Python; nightly, oldest Python; weekly, oldest and latest torch | each PR; nightly, two more Pythons; weekly, each supported torch |
+| 2 | Linux x86 CPU, without MKL | 0.23 E | nightly | nightly |
+| 3 | Linux x86 CUDA, compute capability 8.x, with cuDSS | 0.71 | each PR; weekly, oldest and latest torch | each PR; nightly, the oldest and newest CUDA; weekly, each supported torch |
+| 4 | Linux aarch64 CPU | 0.28 | nightly | nightly |
+| 5 | Linux aarch64 CUDA | 0.71 E | nightly, build only | nightly |
 | 6 | macOS arm64, CPU and MPS | 0.22; 0.67 E with full MPS | each PR | each PR, full MPS; weekly, each supported torch |
-| 7 | Linux ROCm | 0.35 | nightly | each PR; nightly, the oldest and newest ROCm |
-| 8 | Windows CPU | 0.54 | nightly | each PR |
+| 7 | Linux ROCm | 0.34 | nightly | each PR; nightly, the oldest and newest ROCm |
+| 8 | Windows CPU | 0.52 | nightly | each PR |
 | 9 | Windows CUDA | 1.6 E | nightly, build only | nightly |
 
-| Runner-hours | per sparse PR run | per night | per week, and per package release | a month |
+| Runner-hours (estimates) | per sparse PR run | per night | per week, and per package release | a month |
 |---|---|---|---|---|
 | Minimal set | 2.3; 2.8 with full MPS | 4.4 | 3.2 | about 220 |
 | Ideal set | 4.9 | 10.0 | 9.9 | about 495 |
 
-Each configuration is one build job and one test job. The other components' tests add
-about 0.15 h to each test job.[^cicost] A minimal PR run is mostly Linux CPU (0.8 h) and
-NVIDIA GPU (1.0 h). An ideal week adds 3.9 h of NVIDIA GPU and 3.8 h of macOS. Today
+Each configuration is one build job and one test job. The tests of what stays in core,
+the masked tests among them, add about 0.15 h to each test job.[^cicost] A minimal PR
+run is mostly Linux CPU (0.8 h) and CUDA (1.0 h). An ideal weekly run is mostly CUDA
+(3.9 h) and macOS (3.8 h). Today
 every pytorch PR spends about 1.9 runner-hours on sparse tests
 ([Motivation](#motivation)); after R3 that leaves pytorch CI.
 
@@ -815,17 +825,17 @@ more, which a manual label serves better.
 pytorch CI already does this for torchtitan. A label that `labeler.yml` applies by path
 starts a workflow ([labeler.yml:225-241][labeler], [torchtitan.yml:4-10][titanwf]). It
 clones torchtitan at its commit pin and runs torchtitan's own tests against the CI-built
-torch ([test.sh:2435-2488][titan]). A `ciflow/sparse` label would do the same in the
-`sparse` workflow of the test config (D):
+torch ([test.sh:2435-2488][titan]). A `ciflow/sparse` label would do the same in a
+`sparse` workflow that runs the test config (D):
 - clone the sparse repo at its commit pin;
 - build the package against the PR's torch;
 - run the package's tests.
 
-So the commit pin stays after R3 for this check, and the sparse project bumps it. A run
-takes about 0.9 h of CUDA runner time, or 1.3 h if the workflow builds torch itself, as
-torchtitan's does. That is about 165–245 runner-hours a month at three runs per PR, on
-core's runners, and it can block. The cross-repository CI relay (RFC-0050) is the
-alternative on the package's own runners.
+So the commit pin would stay after R3 for this check, and the sparse project would bump
+it. A run takes about 0.9 h on a CUDA runner. If the workflow builds torch itself, as
+torchtitan's does, a build job adds about 0.4 h. That is about 160–240 runner-hours a
+month at three runs per PR (estimates), on core's runners, and it can block. The
+cross-repository CI relay (RFC-0050) is the alternative on the package's own runners.
 
 At R3 the sparse test files leave pytorch's default jobs. This check runs them again
 only where a PR touches what sparse relies on. The other components' sparse tests stay
@@ -1113,15 +1123,21 @@ Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
     from the GitHub Actions API, per-file test times (`test-times.json`, 2026-11-02)
     over the test files target determination chose.
 [^cicost]: Test time: pytorch's per-file test times (`test-times.json`, 2026-11-21) of
-    the 7 sparse test files, in each platform's `default` config; a CUDA or ROCm job
-    also runs the CPU tests. The other components' tests are found by two static
-    scans: "sparse" in the test's name, or sparse constructors, layouts or `to_sparse*`
-    in its source. That method misses tests that build sparse tensors in helpers or
-    OpInfo samples. Their time was measured on a local host (2.7 min serially), with
-    6.5 min estimated for the distributed ones. Each job adds the median overhead of
-    pytorch's own jobs on that platform (trunk and pull runs on main, 2026-11-21).
-    Estimates: the build jobs; no MKL, taken as Linux CPU; aarch64 CUDA, taken as x86
-    CUDA; Windows CUDA, taken as x86 CUDA times the Windows-to-Linux CPU ratio (3.1);
+    the 5 sparse test files, in each platform's `default` config: `test_sparse.py`,
+    `test_sparse_csr.py`, `test_sparse_semi_structured.py`, `export/test_sparse.py` and
+    `jit/test_sparse.py`, which `test_jit.py` runs and which has no time of its own. A
+    CUDA or ROCm job also runs the CPU tests. The masked tests, `test_masked.py` and
+    `test_maskedtensor.py`, are timed the same way. The other components' tests are
+    found by two static scans: "sparse" in the test's name, or sparse constructors,
+    layouts or `to_sparse*` in its source. The scans find 215 test functions; the name
+    scan alone matches 122, and 14 of its matches are not about sparse tensors (flex
+    attention's block masks, for example), which leaves about 200. That method misses
+    tests that build sparse tensors in helpers or OpInfo samples. Their time was
+    measured on a local host (2.7 min serially), with 6.5 min estimated for the
+    distributed ones. Each job adds the median overhead of pytorch's own jobs on that
+    platform (trunk and pull runs on main, 2026-11-21). Estimates: the build jobs; no
+    MKL, taken as Linux CPU; aarch64 CUDA, taken as x86 CUDA; Windows CUDA, taken as
+    x86 CUDA times the Windows-to-Linux CPU ratio (2.3);
     full MPS, as in [A.6](#a6-xpu-and-mps); 4 supported torch releases; and, a month,
     10 sparse PRs with 3 CI runs each. The torch-side counts are commits on main,
     2026-08-04 to 2026-11-02, touching those paths.
