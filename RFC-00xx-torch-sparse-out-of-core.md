@@ -763,10 +763,10 @@ about 3 CPU-minutes, plus 6 per CUDA architecture, and a compiler cache serves t
 until the pin or the stable-ABI headers change (estimate).
 
 The package's own CI builds and tests it from R2 on
-([A.1](#a1-how-the-package-reaches-torch)). From R2 it runs the minimal set below, while
-pytorch CI still runs the sparse tests, so they run twice until R3. After R3 it runs the
-5 sparse test files, which have left pytorch CI, and the tests of what stays in core
-that use sparse tensors:
+([A.1](#a1-how-the-package-reaches-torch)). From R2 it runs the minimal set below, with
+its kernels and with the switch, while pytorch CI still runs the sparse tests until R3.
+After R3 it runs the 5 sparse test files, which have left pytorch CI, and the tests of
+what stays in core that use sparse tensors:
 - the two `torch.masked` test files, which stay in core with `torch.masked`
   ([A.3](#a3-what-stays-in-core-and-why));
 - about 200 test functions in pytorch's other test files that build or pass sparse
@@ -809,11 +809,10 @@ package supports (taken as 4), to check that a package update runs with each of 
 | Ideal set | 4.9 | 10.0 | 9.9 | about 495 |
 
 Each configuration is one build job and one test job. The tests of what stays in core,
-the masked tests among them, add about 0.15 h to each test job.[^cicost] A minimal PR
+the masked tests among them, add about 0.16 h to each test job.[^cicost] A minimal PR
 run is mostly Linux CPU (0.8 h) and CUDA (1.0 h). An ideal weekly run is mostly CUDA
-(3.9 h) and macOS (3.8 h). Today
-every pytorch PR spends about 1.9 runner-hours on sparse tests
-([Motivation](#motivation)); after R3 that leaves pytorch CI.
+(3.9 h) and macOS (3.8 h). Today every pytorch PR spends about 1.9 runner-hours on
+sparse tests ([Motivation](#motivation)); after R3 that leaves pytorch CI.
 
 **On the torch side (question 10).** The package's nightly run catches a torch change
 that breaks sparse only after it lands. To catch it before, the pytorch PRs that touch
