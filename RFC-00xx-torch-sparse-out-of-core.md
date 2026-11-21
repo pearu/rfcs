@@ -39,10 +39,11 @@ This RFC proposes two steps. The second is taken only if owners commit.
   package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
   Every release is a safe place to stop.
-- **Why not less.** Moving only new backends out of tree leaves what users ask for,
-  solvers, missing ops, autograd kernels and SciPy interop, in ~26 k lines of CPU and
-  CUDA code in core with no owner. They carry PyTorch's two named features, GPU and
-  autograd, to sparse data ([README.md:9-11][readme]).
+- **Why not less.** Moving only new backends out of tree leaves ~26 k lines of CPU and
+  CUDA code in core with no owner. Most of what users ask for is left with it: solvers,
+  missing ops, autograd kernels and SciPy interop. That code carries PyTorch's two named
+  features, GPU tensor computation and autograd, to sparse data
+  ([README.md:9-11][readme]).
 
 How the move works is in the appendix,
 [Technical feasibility](#appendix-technical-feasibility).
@@ -70,19 +71,17 @@ How the move works is in the appendix,
   sparse parity; the sparse reviewer could not commit to it.[^201801]
 
 **It cannot be removed, and it is worth keeping.** At least 1,798 public projects call
-torch.sparse outside their tests; 1,052 of them are maintained, and 575 are published
-on PyPI or conda-forge
-([Appendix: User stories in detail](#appendix-user-stories-in-detail)). They use it for
-graph adjacency (PyG), sparse gradients (DeepSpeed), sparse encoders
-(sentence-transformers), mesh Laplacians (pytorch3d), optimal transport (POT), Gaussian
-processes (linear_operator) and bundle adjustment (pypose). PyTorch's own documentation
-names graph adjacency, pruned weights and point clouds as "important applications" that
-it aims to serve with sparse formats ([sparse.md:24-27][sparse-aim]). The 525 scientific
-projects
-are more often maintained than the deep-learning ones (79 % against 49 %). They mostly
-build their matrices with SciPy and hand them to torch.sparse for the GPU and for
-autograd ([B.7](#b7-scientific-users-and-scipy)). So it can move, but only behind the
-same names.
+torch.sparse outside their tests; 1,052 of them are maintained, and 575 are published on
+PyPI or conda-forge ([Appendix: User stories in
+detail](#appendix-user-stories-in-detail)). They use it for graph adjacency (PyG),
+sparse gradients (DeepSpeed), sparse encoders (sentence-transformers), mesh Laplacians
+(pytorch3d), optimal transport (POT), Gaussian processes (linear_operator) and bundle
+adjustment (pypose). PyTorch's own documentation names graph adjacency, pruned weights
+and point clouds as "important applications" and aims to optimize their performance with
+sparse formats ([sparse.md:24-27][sparse-aim]). The 525 scientific projects are more
+often maintained than the deep-learning ones (79 % against 49 %). They mostly build
+their matrices with SciPy and hand them to torch.sparse for the GPU and for autograd
+([B.7](#b7-scientific-users-and-scipy)). So it can move, but only behind the same names.
 
 Nothing replaces it. Of five sparse array libraries compared (torch.sparse, SciPy,
 PyData `sparse`, CuPy and Finch), it is the only one with GPU support, autograd, and
@@ -402,8 +401,8 @@ if C++ users need them.
 | F | Semi-structured to TorchAO | 2:4 ops and classes | TorchAO | rejected: TorchAO removed its sparsity package for lack of use ([pytorch/ao#4728][ao4728]); 2:4 moves with A |
 | G | The torch-xpu-ops model | kernel sources, to a repo pytorch pins and builds in tree | the new repo for kernels; core for registrations; the sparse project bumps the commit pin | the fallback: every new op or backend still needs a core PR, and the commit pin a bump about weekly; no packaging change ([A.7](#a7-a-against-g)) |
 
-**Why not B alone.** B settles the question for new hardware only; solvers, missing ops
-and SciPy interop are not hardware. B's one core change
+**Why not B alone.** B settles the question for new hardware only; solvers, missing ops,
+autograd kernels and SciPy interop are not hardware. B's one core change
 ([A.5](#a5-new-backends-the-core-pieces)) is asked for here too. A new backend means
 notable changes to core, so core takes part in discussing and reviewing it ([Owners and
 governance](#owners-and-governance)); once core approves it, the core changes it needs
