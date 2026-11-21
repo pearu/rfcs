@@ -39,8 +39,10 @@ This RFC proposes two steps. The second is taken only if owners commit.
   package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
   Every release is a safe place to stop.
-- **Why not less.** Moving only new backends out of tree leaves ~26 k lines of CPU and
-  CUDA kernels in core with no owner.
+- **Why not less.** Moving only new backends out of tree leaves what users ask for,
+  solvers, missing ops, autograd kernels and SciPy interop, in ~26 k lines of CPU and
+  CUDA code in core with no owner. They carry PyTorch's two named features, GPU and
+  autograd, to sparse data ([README.md:9-11][readme]).
 
 How the move works is in the appendix,
 [Technical feasibility](#appendix-technical-feasibility).
@@ -73,7 +75,10 @@ on PyPI or conda-forge
 ([Appendix: User stories in detail](#appendix-user-stories-in-detail)). They use it for
 graph adjacency (PyG), sparse gradients (DeepSpeed), sparse encoders
 (sentence-transformers), mesh Laplacians (pytorch3d), optimal transport (POT), Gaussian
-processes (linear_operator) and bundle adjustment (pypose). The 525 scientific projects
+processes (linear_operator) and bundle adjustment (pypose). PyTorch's own documentation
+names graph adjacency, pruned weights and point clouds as "important applications" that
+it aims to serve with sparse formats ([sparse.md:24-27][sparse-aim]). The 525 scientific
+projects
 are more often maintained than the deep-learning ones (79 % against 49 %). They mostly
 build their matrices with SciPy and hand them to torch.sparse for the GPU and for
 autograd ([B.7](#b7-scientific-users-and-scipy)). So it can move, but only behind the
@@ -1031,8 +1036,10 @@ Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
 
 To be filled in after the discussion.
 
+[readme]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/README.md?plain=1#L9-L11
 [poi]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/docs/source/community/persons_of_interest.md?plain=1#L150-L156
 [mr]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/.github/merge_rules.yaml#L159-L180
+[sparse-aim]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/docs/source/sparse.md?plain=1#L24-L27
 [prlife]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/CONTRIBUTING.md?plain=1#L124-L204
 [greenlight]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/CONTRIBUTING.md?plain=1#L672-L686
 [aipol]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/AI_POLICY.md?plain=1#L29-L32
