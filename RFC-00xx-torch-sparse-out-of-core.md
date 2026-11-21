@@ -34,7 +34,7 @@ This RFC proposes two steps. The second is taken only if owners commit.
 - **What it costs.** The project writes the PRs and runs its own CI. Core creates the
   repo, hosts one CI build job during the move, and approves the core-side lines of
   about 100 deletion PRs. It reviews a few small core changes, four additions to the
-  stable ABI among them; if those four can't land, the fallback is a kernel repo that
+  stable ABI among them. If those four can't land, the fallback is a kernel repo that
   pytorch builds in tree, as for XPU. Distributions that package torch build one more
   package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
@@ -292,7 +292,7 @@ move.
 with sparse kernels under dense keys, the 2:4 ops among them.[^families] Each takes
 three PRs: one in the new repo, and two in pytorch, a commit-pin bump and, a release
 later, the deletion of its ATen copy. Sparse owners approve the sparse-only files, the
-commit pin among them; a core reviewer approves a deletion's changes to shared files: a
+commit pin among them. A core reviewer approves a deletion's changes to shared files: a
 few dispatch lines each and, for 18 families, the removal of a kernel's source
 ([A.4](#a4-what-core-adds)).
 
