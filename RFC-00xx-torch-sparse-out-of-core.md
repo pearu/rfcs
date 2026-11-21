@@ -200,30 +200,6 @@ suggest that a project lasts when more than one organization backs it, when it h
 written governance, and when its CI doesn't depend on a single funder.[^lasts] Seeking
 more owners is one of this RFC's goals.
 
-**A minimal-effort owner.** This is a direction, not yet a mechanism. If at some point
-no owner can give more than minimal effort, the sparse project runs in a maintenance
-mode driven by AI agents, under a minimal-effort owner:
-- Obvious bug fixes only: a reproducer that fails with the invariant checks on, a
-  regression test, a fix and an AI review; the fix lands when the review has no
-  findings. A fix is obvious if it stays in the package, changes no API and no behaviour
-  beyond the reproduced bug, breaks no compatibility, and passes the full test suite.
-  Anything else is labelled and waits for a human. A fix shown wrong later is reverted,
-  and its bug waits too.
-- Micro releases for fixes, and minor releases only to follow torch. The automation
-  declines feature requests, but not as a rule: when a human accepts one, the AI agents
-  prepare options and implementations for it, which go through human review as usual.
-- The minimal-effort owner holds the credentials, answers security reports, approves
-  releases and can pause the agents. Since torch depends on the package, core is the
-  natural candidate (question 2).
-
-Human effort stays low: the package aims at torch's stable ABI, uses little non-public
-API, and follows torch's deprecations early, while updating is cheap. A human is needed
-only when torch really changes; if no package build passes against a torch release
-candidate, the owner is alerted before that release ships. CI uses free plans where it
-can; the agents' tokens are a cost that, in this proposal's view, core can carry by then
-(question 9). The same workflow runs from the move on, to keep maintenance smooth and to
-test the mode before it is needed.
-
 **Known to the community, with the experience to own and drive the direction.** They
 have a record in the code that moves; being listed here is not a commitment:
 - amjames: sparse compressed kernels, and a sparse code owner ([pytorch#104062](https://github.com/pytorch/pytorch/pull/104062)).
@@ -235,6 +211,21 @@ have a record in the code that moves; being listed here is not a commitment:
 
 Help also comes from the community. In the last 12 months, 67 other people opened sparse
 PRs, and 71 opened or commented on sparse issues.[^community]
+
+**A minimal-effort owner.** The project keeps an owner even when no owner can give more
+than minimal effort. This is a direction that aims at minimizing the future maintenance
+burden; planning it is left to when this RFC is implemented. An owner who stays on takes
+the role; if none does, core is the natural candidate, since torch depends on the
+package (question 2). With core as the minimal-effort owner, core's AI policy applies
+([AI_POLICY.md:29-32][aipol]). AI agents help core reviewers interpret sparse issues and
+PRs: an important bug fix, an update to follow torch, or a feature request or change of
+direction. The last is declined unless core decides to pursue it. A simple bug fix is a
+localized code change: code out of test coverage, a typo, or plainly wrong code. Where
+code doesn't follow its documentation, the fix may be simple or may need significant
+effort; the latter needs a human decision. An agent's fix may not change the state of
+existing tests, unless a human finds that reasonable. With no fixes landing, a
+stable-ABI wheel keeps working with later torch releases, as torchaudio's does ([Prior
+Art](#prior-art)).
 
 If no owner has committed by R0, nothing moves. That is a sound end state, not a
 failure, and the question can be reopened when owners come forward.
@@ -378,7 +369,7 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 | Risk or cost | If it happens |
 |---|---|
 | No owner for the sparse project | Nothing moves ([Owners and governance](#owners-and-governance)). |
-| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on, under a minimal-effort owner ([Owners and governance](#owners-and-governance)). The code moved verbatim, so the move can be reversed the same way. |
+| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on, under a minimal-effort owner: an owner who stays on, or else core ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
 | Work stalls or plans change (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a commit pin, on every platform. The release order of [A.1](#a1-how-the-package-reaches-torch) is untested, and so is conda. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
@@ -448,8 +439,8 @@ question.
 2. Governance of the sparse project: who owns it, and who breaks ties on design
    decisions? While there is a single owner, will core reviewers take part in
    architecture review ([Owners and governance](#owners-and-governance))? Can pytorch's
-   automated reviewer run on the new repo too? If no owner can give more than minimal
-   effort, would core be the minimal-effort owner? Decided at R0.\
+   automated reviewer run on the new repo too? If no owner stays on, would core be the
+   minimal-effort owner, under its own AI policy? Decided at R0.\
    Ask: albanD, malfet
 3. Will core accept the small core PRs that a new sparse backend needs (ask 4)?\
    Ask: malfet, EikanWang
@@ -469,8 +460,7 @@ question.
    dispatch stubs through the package's documented interface ([A.6](#a6-xpu-and-mps)),
    each project bumping its own commit pin in pytorch?\
    Ask: EikanWang, guangyey
-9. Where does the package's CI run after R3, and who funds its GPU and macOS runners
-   and, under a minimal-effort owner, its AI agents' tokens?
+9. Where does the package's CI run after R3, and who funds its GPU and macOS runners?
    Sparse tests are a small share of CI, so pytorch's runners, on demand rather than on
    every PR, may do. MPS needs an owner with a particular interest in it.\
    Ask: atalman, malfet
@@ -1045,6 +1035,7 @@ To be filled in after the discussion.
 [mr]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/.github/merge_rules.yaml#L159-L180
 [prlife]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/CONTRIBUTING.md?plain=1#L124-L204
 [greenlight]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/CONTRIBUTING.md?plain=1#L672-L686
+[aipol]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/AI_POLICY.md?plain=1#L29-L32
 [bv]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/build_variables.bzl#L1574-L1587
 [xpumr]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/.github/merge_rules.yaml#L552-L563
 [beta]: https://github.com/pytorch/pytorch/blob/a67a74d3e71bf2891b0d02b126fe7390090e1f1c/docs/source/sparse.md?plain=1#L13-L15
