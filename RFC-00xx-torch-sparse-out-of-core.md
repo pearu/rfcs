@@ -162,11 +162,11 @@ runner hours of test jobs on sparse tests, 1.6 %.[^ci] Saving it is a side effec
   - *R2*: the package gets its own repo and wheel, and kernels start to move. Core keeps
     its copies behind the switch.
   - *R3*: the rest of the kernels move. Core's copies of R2's kernels are deleted, and
-    the sparse tests leave pytorch CI.
+    the sparse test files leave pytorch CI.
   - *R4*: core's last copies are deleted.
 - *The options*, from [Alternatives](#alternatives): the proposal is A, a separate
-  project. It is reached through C, an in-repo package for the Python code, with D, a
-  test config for sparse, and E, the maintenance policy, at once. G, a kernel repo that
+  project. D, a test config for sparse, and E, the maintenance policy, come at once. The
+  move starts with C, an in-repo package for the Python code. G, a kernel repo that
   pytorch builds in tree, is the fallback.
 
 ### Owners and governance
@@ -305,9 +305,8 @@ From [R0], the sparse tests also run in a CI config of their own, `sparse` (D).
 ### The migration
 
 **Design rule.** Move code as close to verbatim as possible, with its existing bugs,
-issues and limitations. Keep the existing tests passing. Make each step small enough
-for a human reviewer to follow. A bug found during the move gets its own PR, after the
-move.
+issues and limitations. Keep the existing tests passing. Make each PR small enough for a
+human reviewer to follow. A bug found during the move gets its own PR, after the move.
 
 | Release | What changes | How the package ships |
 |---|---|---|
