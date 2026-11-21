@@ -30,12 +30,12 @@ This RFC proposes two steps. The second is taken only if owners commit.
   step 1, a sound end state.
 - **Where it goes.** Development for users who can be named, not parity with dense
   tensors. The bar of step 1 stays; the project applies it, and core takes part where a
-  change needs notable changes to core, as a new backend does.
+  decision means notable changes to core, as a new backend does.
 - **What it costs.** The project writes the PRs and runs its own CI. Core creates the
   repo, reviews a few small core changes, four additions to the stable ABI among them,
-  and hosts one CI build job during the move. If those four can't land, the fallback is
-  a kernel repo that pytorch builds in tree, as for XPU. Distributions that package
-  torch build one more package.
+  approves the core-side lines of about 100 deletion PRs, and hosts one CI build job
+  during the move. If those four can't land, the fallback is a kernel repo that pytorch
+  builds in tree, as for XPU. Distributions that package torch build one more package.
 - **How long.** Four pytorch releases, about eight months, and one more to clean up.
   Every release is a safe place to stop.
 - **Why not less.** Moving only new backends out of tree leaves ~26 k lines of CPU and
@@ -181,14 +181,18 @@ otherwise in the owner's own time, at lower availability. The record:
 One committed owner is enough to start. Technical review (correctness, coverage,
 regression tests) can largely be done with AI agents, as in pytorch's own PR lifecycle,
 where an automated review comes before the human one
-([CONTRIBUTING.md:124-204][prlife]). Part of the agent review is to split a PR's review
-into technical and architectural parts, which shows when a human needs to step in. Human
-review is needed for architecture: whether a new op belongs, whether a change fits the
-design, changes to the design, and decisions that break compatibility. With a single
-owner, core reviewers or the community give that review, and users who ask for a feature
-review the PRs that add it. Inside pytorch/pytorch, an owner named in the sparse merge
-rule can have technical PRs approved by pytorch's automated reviewer when the rule
-covers every file the PR changes ([CONTRIBUTING.md:672-686][greenlight]).
+([CONTRIBUTING.md:124-204][prlife]). Part of the project's agent review is to split a
+PR's review into technical and architectural parts, which shows when a human needs to
+step in. Human review is needed for architecture: whether a new op belongs, whether a
+change fits the design, changes to the design, and decisions that break compatibility.
+With a single owner, core reviewers or the community give that review, and users who ask
+for a feature review the PRs that add it. Inside pytorch/pytorch, an owner named in the
+sparse merge rule can have technical PRs approved by pytorch's automated reviewer when
+the rule covers every file the PR changes ([CONTRIBUTING.md:672-686][greenlight]).
+
+**When core takes part.** Core takes part in a design decision only when the project has
+too few owners, or when the decision means notable changes to core, as a new backend
+does.
 
 More owners reduce the risk, and can review each other's PRs. Comparable projects
 suggest that a project lasts when more than one organization backs it, when it has
@@ -253,7 +257,8 @@ experiment stays.
 autograd through sparse inputs, missing ops (39 Array API functions fit zero semantics
 and are missing, [B.8](#b8-torchsparse-beside-other-sparse-libraries)), and SciPy
 interop. Backends are added by the project's bar: a project that asks, and an owner. A
-new backend needs notable changes to core, so core takes part in that decision (ask 4).
+new backend needs changes to core's keys and code generation, small but notable
+([A.5](#a5-new-backends-the-core-pieces)), so core takes part in that decision (ask 4).
 
 ### The maintenance policy
 
@@ -285,8 +290,9 @@ move.
 **The size.** About 100 families move in R2–R3: 89 with sparse dispatch keys, and 11
 with sparse kernels under dense keys, the 2:4 ops among them.[^families] Each takes
 three PRs: one in the new repo, and two in pytorch, a commit-pin bump and, a release
-later, the deletion of its ATen copy. Sparse owners approve the sparse-only files; a
-core reviewer approves a deletion's changes to shared files ([A.4](#a4-what-core-adds)).
+later, the deletion of its ATen copy. Sparse owners approve the sparse-only files, the
+commit pin among them; a core reviewer approves a deletion's changes to shared files, a
+few deleted lines each ([A.4](#a4-what-core-adds)).
 
 **Why four releases, and a fifth to clean up.** No Python name breaks, so the pace is
 set by the work, not by deprecation: R1 is mechanical, R2–R3 carry the kernels.
@@ -326,7 +332,8 @@ review, and only what the project cannot do itself:
    gives the generic sparse kernels to any backend key, which B and G need too.
 
 Beyond these four, the asks are review of the smaller core changes listed in
-[A.4](#a4-what-core-adds). Nothing is asked of TorchAO (A.4).
+[A.4](#a4-what-core-adds), and of the core-side part of each deletion PR ([The
+migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 
 ## **Metrics**
 
@@ -375,10 +382,10 @@ if C++ users need them.
 
 **Why not B alone.** B settles the question for new hardware only; solvers, missing ops
 and SciPy interop are not hardware. B's one core change
-([A.5](#a5-new-backends-the-core-pieces)) is asked for here too. Core takes part in a
-design decision only when the project lacks owners, or when the decision means notable
-changes to core. A new backend does, so core takes part in discussing and reviewing it;
-once core approves it, its work can land in core.
+([A.5](#a5-new-backends-the-core-pieces)) is asked for here too. A new backend means
+notable changes to core, so core takes part in discussing and reviewing it ([Owners and
+governance](#owners-and-governance)); once core approves it, the core changes it needs
+can land (ask 4).
 
 ## **Prior Art**
 
@@ -543,7 +550,7 @@ wrong result (see [A.9](#a9-evidence-kernel-families-moved)).
 | Release | Core adds |
 |---|---|
 | R0 | the `sparse` test config; a marker for the 122 sparse tests in core test files |
-| R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS for the package. The rule covers the sparse-only files, and sparse owners approve changes to them. A deletion PR also changes files the rule doesn't cover, so a core reviewer approves those parts: `native_functions.yaml`, which core reviews anyway; files shared with dense code, where 18 of the 100 families have a kernel (`TensorShape.cpp`, `TensorConversions.cpp`, `ReduceOps.cpp` and four more); and `build_variables.bzl`, which names the sparse sources one by one ([build_variables.bzl:1574-1587][bv]). **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops (in progress: [pytorch#203903](https://github.com/pytorch/pytorch/pull/203903), a draft); (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle; (4) typed exceptions: today a stable kernel's `IndexError` reaches Python as `RuntimeError`, though its message arrives ([pytorch#180135](https://github.com/pytorch/pytorch/pull/180135)).** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
+| R1 | `sparsetorch` in the wheel's `packages`, as `functorch` ([pyproject.toml:188][pyproj]); a merge rule and CODEOWNERS for the package. The rule covers the sparse-only files, the commit-pin file among them, as the XPU rule covers `third_party/xpu.txt` ([merge_rules.yaml:552-563][xpumr]), and sparse owners approve changes to them. A deletion PR also changes files the rule doesn't cover, so a core reviewer approves those parts: `native_functions.yaml`, which core reviews anyway; files shared with dense code, where 18 of the 100 families have a kernel[^families] (`TensorShape.cpp`, `TensorConversions.cpp`, `ReduceOps.cpp` and four more); and `build_variables.bzl`, which names the sparse sources one by one ([build_variables.bzl:1574-1587][bv]). **In the stable ABI: (1) `Scalar` as a kernel argument and for calling ops (in progress: [pytorch#203903](https://github.com/pytorch/pytorch/pull/203903), a draft); (2) accessors and an in-place setter for a sparse tensor's indices, values and nnz; (3) the current cuSPARSE handle; (4) typed exceptions: today a stable kernel's `IndexError` reaches Python as `RuntimeError`, though its message arrives ([pytorch#180135](https://github.com/pytorch/pytorch/pull/180135)).** Any stable-ABI extension with a `Scalar` argument or a vendor library handle needs the same. |
 | R2 | a CI job that builds the package from a commit pin, and the dependency in the wheel requirements; a placeholder kernel, generated for each deleted sparse kernel, that says "install `sparsetorch`", and no override warning when the package replaces a placeholder ([OperatorEntry.cpp:213-225][override-warn]); AOTInductor C shims that call the dispatcher for moved ops, with their headers unchanged ([gen_aoti_c_shim.py:458-482][aoti-gen]); a way to skip sparse OpInfo samples without it; Inductor's 2:4 kernel choice through a registration ([mm.py:203-205][inductor]) |
 | R3 | an extension point through which the package provides `Adagrad`'s step for sparse gradients, sparse code now in core's `torch/optim/adagrad.py` |
 
@@ -964,7 +971,12 @@ Details: [`sparse-landscape.md`](RFC-00xx-assets/sparse-landscape.md) §3.
     The 12 that change `native_functions.yaml`: 5 for MPS, 3 for XPU, and 4 others.
 [^families]: `native_functions.yaml` at the commit above, grouped by op name with the
     overload and the in-place `_` dropped. The 29 operators that stay in core are not
-    counted; backward ops count as families of their own (5).
+    counted; backward ops count as families of their own (5). Of the 100, 18 have a
+    kernel defined outside the files that the "Sparse" merge rule covers
+    ([merge_rules.yaml:159-180][mr]), in seven files shared with dense code:
+    `TensorShape.cpp`, `TensorConversions.cpp`, `ReduceOps.cpp`, `BinaryOps.cpp`,
+    `TensorFactories.cpp`, `cuda/Indexing.cu` and
+    `cuda/ValidateCompressedIndicesKernel.cu`.
 [^ci]: 99 landed PRs touching no sparse file, 2026-08-05 to 2026-11-02: job times
     from the GitHub Actions API, per-file test times (`test-times.json`, 2026-11-02)
     over the test files target determination chose.
