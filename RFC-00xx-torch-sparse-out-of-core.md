@@ -212,20 +212,21 @@ have a record in the code that moves; being listed here is not a commitment:
 Help also comes from the community. In the last 12 months, 67 other people opened sparse
 PRs, and 71 opened or commented on sparse issues.[^community]
 
-**A minimal-effort owner.** The project keeps an owner even when no owner can give more
-than minimal effort. This is a direction that aims at minimizing the future maintenance
+**A minimal-effort owner.** The project keeps an owner even when none can give more than
+minimal effort. This is a direction that aims at minimizing the future maintenance
 burden; planning it is left to when this RFC is implemented. An owner who stays on takes
 the role; if none does, core is the natural candidate, since torch depends on the
 package (question 2). With core as the minimal-effort owner, core's AI policy applies
 ([AI_POLICY.md:29-32][aipol]). AI agents help core reviewers interpret sparse issues and
-PRs: an important bug fix, an update to follow torch, or a feature request or change of
-direction. The last is declined unless core decides to pursue it. A simple bug fix is a
-localized code change: code out of test coverage, a typo, or plainly wrong code. Where
-code doesn't follow its documentation, the fix may be simple or may need significant
-effort; the latter needs a human decision. An agent's fix may not change the state of
-existing tests, unless a human finds that reasonable. With no fixes landing, a
-stable-ABI wheel keeps working with later torch releases, as torchaudio's does ([Prior
-Art](#prior-art)).
+PRs: is this an important bug fix, an update to follow torch, or a feature request or
+change of direction? The last is declined unless core decides to pursue it. An agent may
+prepare a simple bug fix, and a reviewer answers for it, as the policy asks. A simple
+bug fix is a localized code change: code out of test coverage, a typo, or plainly wrong
+code. Where code doesn't follow its documentation, the fix may be simple or may need
+significant effort; the latter needs a human decision. An agent's fix may not change
+existing tests or their results, unless a human finds that reasonable. With no fixes
+landing, a stable-ABI wheel keeps working with later torch releases, as torchaudio's
+does ([Prior Art](#prior-art)).
 
 If no owner has committed by R0, nothing moves. That is a sound end state, not a
 failure, and the question can be reopened when owners come forward.
@@ -369,7 +370,7 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 | Risk or cost | If it happens |
 |---|---|
 | No owner for the sparse project | Nothing moves ([Owners and governance](#owners-and-governance)). |
-| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on, under a minimal-effort owner: an owner who stays on, or else core ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
+| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on, under a minimal-effort owner: an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
 | Work stalls or plans change (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a commit pin, on every platform. The release order of [A.1](#a1-how-the-package-reaches-torch) is untested, and so is conda. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
