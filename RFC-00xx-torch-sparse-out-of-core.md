@@ -217,16 +217,15 @@ There may still be periods when no owner can give more than minimal effort. The 
 then keeps a minimal-effort owner: an owner who stays on or, if none does, core
 (question 2). Core is the natural candidate, since torch depends on the package. Such a
 period keeps the package healthy until community interest or a new owner brings it back
-to active development. How it works is left to when this RFC is implemented, under
-core's AI policy ([AI_POLICY.md:29-32][aipol]). With an LLM, a hole in torch.sparse is
-cheap to fill ([Motivation](#motivation)); the idea is to make sorting cheap too. AI
-agents help reviewers sort sparse issues and PRs into important bug fixes, updates to
-follow torch, and feature requests or changes of direction. The last wait for an owner
-who commits, as the maintenance policy asks ([The maintenance
-policy](#the-maintenance-policy)). For example, agents could prepare simple, localized
-fixes that a reviewer answers for, and leave existing tests unchanged. With no fixes
-landing, a stable-ABI wheel keeps working with later torch releases, as torchaudio's
-does ([Prior Art](#prior-art)).
+to active development. How such a period works is left to when this RFC is implemented,
+under core's AI policy ([AI_POLICY.md:29-32][aipol]). With an LLM, a hole in
+torch.sparse is cheap to fill ([Motivation](#motivation)); the idea is to make sorting
+cheap too. AI agents help reviewers sort sparse issues and PRs into important bug fixes,
+updates to follow torch, and feature requests or changes of direction. The last wait for
+an owner who commits, as [the maintenance policy](#the-maintenance-policy) asks. For
+example, agents could prepare simple, localized fixes that a reviewer answers for, and
+leave existing tests unchanged. With no fixes landing, a stable-ABI wheel keeps working
+with later torch releases, as torchaudio's does ([Prior Art](#prior-art)).
 
 If no owner has committed by R0, nothing moves. That is a sound end state, not a
 failure, and the question can be reopened when owners come forward.
@@ -370,7 +369,7 @@ migration](#the-migration)). Nothing is asked of TorchAO (A.4).
 | Risk or cost | If it happens |
 |---|---|
 | No owner for the sparse project | Nothing moves ([Owners and governance](#owners-and-governance)). |
-| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on. The minimal-effort owner is an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
+| Owners leave after the move | As today: sparse falls back to maintenance mode, now in the package torch depends on. Until new owners come forward, the minimal-effort owner is an owner who stays on, or core if it agrees ([Owners and governance](#owners-and-governance), question 2). The code moved verbatim, so the move can be reversed the same way. |
 | Work stalls or plans change (R2–R3) | Each release still works; families not yet deleted from ATen can switch back. |
 | torch depends on a package that depends on torch | pytorch CI builds one more wheel from a commit pin, on every platform. The release order of [A.1](#a1-how-the-package-reaches-torch) is untested, and so is conda. |
 | A broken package breaks `import torch` | The package's CI runs `import torch` on every platform; a release blocker. |
